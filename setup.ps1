@@ -14,8 +14,7 @@ if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
 Write-Host "Installing the other packages..."
 & $py -m pip install -q -r requirements.txt
 Write-Host "Downloading the models..."
-& $py -m cleaner.download --ollama
+& $py -m cleaner.download
 if ($LASTEXITCODE) { Write-Host "A model download failed. Run setup.ps1 again to retry."; exit 1 }
 if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { Write-Host "Optional: install ffmpeg so short videos can be checked:  winget install Gyan.FFmpeg" }
-if (-not (Get-Command ollama -ErrorAction SilentlyContinue)) { Write-Host "Optional: install Ollama from ollama.com for the AI second opinion, then run setup.ps1 again." }
 Write-Host "Setup done. Next: .\start.ps1  (or double-click 'Start Photo Cleaner.bat')"

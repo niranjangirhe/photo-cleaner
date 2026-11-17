@@ -1,0 +1,41 @@
+# Photo Cleaner with an NVIDIA graphics card. Start:   docker compose -f nvidia.yml up
+# then open http://127.0.0.1:8770
+#
+# Needs Windows with WSL 2, or Linux with the NVIDIA Container Toolkit. Not for Macs: Docker on macOS
+# can't use the Mac's graphics chip, so use the plain "docker compose up" there.
+#
+# Same as docker-compose.yml, plus the graphics card. Both share the same models and results,
+# so you can switch between them without downloading anything again.
+
+# A fixed name: Docker's storage is named after the project, not the folder, so renaming or moving
+# this folder keeps your downloaded models and results.
+name: photo-cleaner
+
+services:
+  photo-cleaner:
+    build:
+      context: .
+      args:
+        TORCH_INDEX: https://download.pytorch.org/whl/cu126
+    image: photo-cleaner:gpu
+    pull_policy: build                # built on your computer, never downloaded from Docker Hub
+    ports:
+      - "127.0.0.1:8770:8770"         # only reachable from this computer
+    volumes:
+      - "${PHOTOS:-./input}:/photos:ro"
+      - data:/data                    # results, previews, face crops
+      - models:/models                # downloaded models (~5 GB), kept between runs
+    environment:
+      HF_TOKEN: "${HF_TOKEN:-}"       # optional: a Hugging Face token makes the first download faster
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  data:
+  models:

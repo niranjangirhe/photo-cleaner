@@ -9,7 +9,6 @@ Photo Cleaner's own code is under the MIT license (see `LICENSE`). It builds on 
 | SigLIP 2 so400m-patch14-384 (Google) | Tags, search | Hugging Face: `google/siglip2-so400m-patch14-384` | Apache 2.0 |
 | InsightFace buffalo_l (SCRFD detector + ArcFace recognition) | Finding faces, grouping people | InsightFace GitHub release v0.7 | Non-commercial research use only |
 | RapidOCR (PaddleOCR PP-OCR models) | Reading text | `rapidocr_onnxruntime` on PyPI | Apache 2.0 |
-| Qwen2.5-VL 7B (optional) | Second opinion on unclear photos | Ollama library: `qwen2.5vl:7b` | Apache 2.0 |
 
 The InsightFace models are free for non-commercial use, which covers sorting your own photos. If you build a commercial product on this code, swap them for commercially licensed face models.
 

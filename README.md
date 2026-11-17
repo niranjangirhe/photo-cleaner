@@ -26,8 +26,7 @@ Everything runs on your computer, one step at a time:
 | Faces | Finds every face and makes a fingerprint of it | InsightFace (SCRFD + ArcFace) |
 | People | Groups matching faces into people | |
 | Read text | Reads screenshots, documents and receipts (OTP codes, tickets, certificates) | RapidOCR |
-| Suggestions | Turns all of the above into keep, delete or unsure | rules in `cleaner/rules.py` |
-| Second opinion (optional) | Takes another look at photos that seem blurry or accidental | Qwen2.5-VL through Ollama |
+| Suggestions | Turns all of the above into keep, delete or unsure | rules in `cleaner/rules.py` and `cleaner/textrules.py` |
 
 Photo Cleaner never deletes or changes your photos. It reads your Takeout folder and writes its results to its own data folder.
 
@@ -45,32 +44,31 @@ Album folders in the export are fine: the tool recognises album copies as the sa
 You need [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows, macOS) or Docker Engine (Linux), and about 10 GB of free disk space.
 
 1. Download or clone this repository and open a terminal in its folder.
-2. Copy `.env.example` to `.env` and set `PHOTOS` to your unzipped Takeout folder:
+2. Put your photos where the app can see them. The simplest way: unzip your Takeout into the `input` folder inside this repository. That's all; no setup needed.
+
+   If you'd rather keep your photos where they are (another folder or drive), copy `.env.example` to `.env` and set `PHOTOS` to that folder instead:
    ```
    PHOTOS=C:/Users/you/Downloads/Takeout
    ```
-   On macOS that looks like `PHOTOS=/Users/you/Downloads/Takeout`. Docker shares only this folder with the app, read-only.
+   On macOS that looks like `PHOTOS=/Users/you/Downloads/Takeout`. Either way, Docker shares only that one folder with the app, read-only.
 3. Start it with the one command that matches your computer:
 
    | Your computer | Command |
    |---|---|
    | Any computer, including Macs and laptops without an NVIDIA card | `docker compose up` |
-   | Same, plus the AI second opinion | `docker compose --profile ai up` |
-   | Has an NVIDIA graphics card | `docker compose -f docker-compose.yml -f docker-compose.gpu.yml up` |
-   | Has an NVIDIA graphics card, plus the AI second opinion | `docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile ai up` |
+   | Has an NVIDIA graphics card | `docker compose -f nvidia.yml up` |
 
-   Plain `docker compose up` is the default: it runs everything on the processor, works on every computer, and skips the AI second opinion.
+   Plain `docker compose up` is the default: it runs everything on the processor and works on every computer.
 
-   - The **NVIDIA** commands make tagging several times faster. They need Windows with WSL 2, or Linux with the NVIDIA Container Toolkit installed.
-   - The **AI second opinion** (`--profile ai`) adds Qwen2.5-VL, which takes another look at photos that seem blurry or accidental. It's optional and downloads about 6 GB more. Everything else works without it.
-   - **On a Mac**, use one of the first two commands. Docker can't use the Mac's graphics chip, so it runs on the processor: that works, just slower. For full speed on Apple Silicon, run it without Docker, as described below.
+   - The **NVIDIA** command makes tagging several times faster. It needs Windows with WSL 2, or Linux with the NVIDIA Container Toolkit installed.
+   - **On a Mac**, use the first command. Docker can't use the Mac's graphics chip, so it runs on the processor: that works, just slower. For full speed on Apple Silicon, run it without Docker, as described below.
 
-   The first start builds the image and downloads the models (about 5 GB, or about 11 GB with the second opinion), so give it a while. Later starts take seconds. Use the same command each time you start it.
+   The first start builds the image and downloads the models (about 5 GB), so give it a while. The log prints the download's progress every few seconds, and if it's interrupted it picks up where it left off. No Hugging Face account is needed; if you have one, putting `HF_TOKEN=your-token` in `.env` makes the download faster. Later starts take seconds. Use the same command each time you start it, and the same with `down` instead of `up` to stop it (for example `docker compose -f nvidia.yml down`). Both commands share the downloaded models and your results, so switching between them downloads nothing new.
 4. Open http://127.0.0.1:8770 and press Start.
 
 ## Running without Docker
 
-You need Python 3.10 or newer. ffmpeg (for short videos) and [Ollama](https://ollama.com) (for the second opinion) are optional.
+You need Python 3.10 or newer. ffmpeg is optional; without it, short videos are left unchecked.
 
 On Windows:
 
@@ -88,19 +86,29 @@ On macOS or Linux:
 ./start.sh
 ```
 
-Setup installs the Python packages and downloads the models into `models/`. If a download fails, run it again: it skips what's already there. The dashboard opens at http://127.0.0.1:8770. Pick your Takeout folder with "Choose folder" (or in Settings) and press Start.
+Setup installs the Python packages and downloads the models into `models/`. If a download fails, run it again: it skips what's already there. The dashboard opens at http://127.0.0.1:8770. It uses the `input` folder by default, so if you unzipped your Takeout there, just press Start. Otherwise pick your Takeout folder with "Choose folder" (or in Settings) first; any folder on your computer works.
 
 It uses CUDA on an NVIDIA card, the graphics chip on Apple Silicon, and the processor otherwise.
 
 ## Using the dashboard
 
-- Suggested delete: go through one reason at a time with the chips at the top. Click photos to select them, then Approve for delete or Keep. Double-click a photo to see it full size and use the keyboard: K to keep, D to approve for delete, B to approve both a duplicate and its kept copy, arrow keys to move.
-- Unsure: tickets, notes, blurry photos with people in them, and other things the tool won't decide alone.
-- Duplicates: each group side by side, with the copy it suggests keeping marked in green.
-- People: click a person to see their photos. Rename, merge two groups of the same person, or hide strangers. Photos of people you know are protected.
-- Map: hold Shift and drag (or press "Select an area") to pick an area. The photos inside appear below, and "Open this area in a new tab" opens them as a filter.
-- Approved for delete: your delete list. Each photo links to itself in Google Photos. Delete it there and tick it, or let the extension do it. Deleted photos move to the Deleted in Google tab.
-- Settings (the gear icon): the photos folder, the second opinion, and Start over, which clears all results so you can run again.
+The sidebar follows the job: Overview, then Review, then Library, then Delete in Google.
+
+- Overview: how much space you could free, the progress of each step, and the photos just processed.
+- To delete: go through one reason at a time with the chips at the top. Each photo has Keep and Delete buttons, so you rarely need to open one. Or click photos to select several (Shift-click for a range) and decide them together.
+- Not sure: tickets, notes, blurry photos with people in them, and other things the tool won't decide alone.
+- Duplicates: each group side by side with its size, resolution and sharpness. The tool suggests keeping the sharpest; press Keep only this one under any photo to keep a different one instead.
+- All photos and Keeping: your whole library, with search and filters.
+- People: open a person to see their photos. Rename, merge two groups of the same person, or hide strangers. Photos of people you know are protected.
+- Map: hold Shift and drag (or press Select an area) to pick an area. Its photos appear below, and Open this area in a new tab opens them as a filter.
+- Delete list: what you approved, not yet deleted in Google. Let the helper extension delete them, or open each one in Google Photos and tick it. Deleted photos move to Deleted.
+- Settings: the photos folder, and Start over, which clears all results so you can run again.
+
+Your own choices are circled like a grease pencil on a contact sheet: red for approved for delete, green for keep. The tool's suggestions are the small coloured flags.
+
+The Size slider runs from 8 photos per row down to 2, with sharper images at the large sizes. Whole photo shows each photo uncropped, and Reasons turns the captions on or off.
+
+Keyboard: in the grid, K keeps and D approves the photo in focus, Enter opens it. In the full-size view, arrows move, K keep, D delete, U undo, O keep only this one (duplicates), B delete the whole group, G open in Google Photos, Esc close.
 
 Your storage only comes back after you empty the trash in Google Photos.
 
@@ -118,7 +126,7 @@ It stops on its own when something looks unexpected. It depends on how the Googl
 ## Privacy
 
 - The dashboard only listens on your own computer (127.0.0.1). The Docker setup publishes it the same way.
-- Your photos are only read. Previews, face crops and results stay in the data folder (`data/`, or the `photo-cleaner-data` Docker volume).
+- Your photos are only read. Previews, face crops and results stay in the data folder (`data/`, or the `photo-cleaner_data` Docker volume).
 - The models run locally. Nothing about your photos is sent anywhere.
 - The map background is loaded from OpenStreetMap, which sees which areas of the map you view, but not your photos or their locations.
 
@@ -131,7 +139,6 @@ The code is MIT licensed. Setup downloads the models from their official sources
 | SigLIP 2 so400m (Google) | Apache 2.0 |
 | InsightFace buffalo_l | Non-commercial research use only |
 | RapidOCR / PaddleOCR models | Apache 2.0 |
-| Qwen2.5-VL 7B (optional) | Apache 2.0 |
 
 Sorting your own photos counts as non-commercial use. If you build a commercial product on this code, replace the InsightFace models. Full details, including the bundled map libraries, are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
@@ -147,13 +154,23 @@ Everything has a default. These environment variables change it:
 | `CLEANER_BROWSE_ROOTS` | the whole computer | Limits the folder picker to these folders (Docker sets `/photos`) |
 | `PORT` | `8770` | Dashboard port |
 | `CLEANER_HOST` | `127.0.0.1` | Address the server listens on (Docker sets `0.0.0.0` inside the container) |
-| `OLLAMA_URL` | `http://127.0.0.1:11434` | Where Ollama runs |
-| `CLEANER_MODEL` | `qwen2.5vl:7b` | Ollama model for the second opinion |
 | `CLEANER_VIDEO_MAX_S` | `5` | Videos this long or longer are skipped |
 | `CLEANER_FACE_MATCH` | `0.5` | How alike two faces must be to count as one person; raise it if different people get merged |
 | `CLEANER_SIGLIP` | `google/siglip2-so400m-patch14-384` | Tagging model on Hugging Face |
 
 The tag list lives in `cleaner/taglist.py`. Change or add tags there and press "Check for new files". Tags are worked out from fingerprints saved during the first run, so a change takes seconds rather than a full re-run.
+
+What the text in an image means lives in `cleaner/textrules.py`, as plain word lists:
+
+| List | What it means | Examples |
+|---|---|---|
+| Important | Keep it | passport, ID card, social security, W-2, NHS number, IBAN, Personalausweis, carte vitale, codice fiscale, Aadhaar, diploma, payslip, insurance policy, prescription |
+| Receipt | Two or more of these: it's a bill | total, subtotal, sales tax, VAT, MwSt, TVA, IVA, GST, qty, invoice, change due |
+| Receipt worth keeping | A bill you may need: Unsure | warranty, garantie, IMEI, serial number, tuition, pharmacy, utility bill |
+| Check | Tickets, bookings, parcels: Unsure | boarding pass, confirmation number, Amtrak, Eurostar, PNR, tracking number, UPS, DHL |
+| Throwaway | Temporary screen content: suggested delete | OTP, verification code, delivered, zugestellt, you sent, Venmo, last seen, followers, 50% off |
+
+The lists cover common documents from the US, UK, Europe and India, in English and in German, French, Spanish, Italian and Dutch. Accents don't matter: "reçu" also matches "recu". Add words for the documents, bills and apps of your country, then press "Check for new files".
 
 ## Project layout
 
@@ -166,13 +183,15 @@ cleaner/
   faces.py, people.py   face detection, fingerprints, grouping into people
   ocr.py                text in screenshots and documents
   rules.py              keep / delete / unsure
-  llm.py                optional Qwen second opinion
+  textrules.py          word lists for text: important, receipt, ticket, throwaway
   pipeline.py           runs the steps in order, with pause and resume
   server.py             the dashboard's web server and API
   download.py           model downloads
 web/                    the dashboard (plain HTML, CSS and JavaScript, no build step)
 extension/              the optional browser extension for deleting in Google Photos
-docker/, Dockerfile, docker-compose*.yml
+docker/, Dockerfile      the Docker image
+docker-compose.yml      Docker setup (runs on the processor)
+nvidia.yml              the same setup, using an NVIDIA graphics card
 ```
 
 ## Contributing
@@ -180,6 +199,7 @@ docker/, Dockerfile, docker-compose*.yml
 Issues and pull requests are welcome. Good places to start:
 
 - Better tag phrasings for your language or culture in `cleaner/taglist.py`.
+- More words in `cleaner/textrules.py`: documents, bills and apps from your country.
 - Safer or smarter rules in `cleaner/rules.py`.
 - The extension's Google Photos selectors, when Google changes its website.
 

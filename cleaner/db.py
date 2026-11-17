@@ -2,7 +2,7 @@
 import sqlite3
 import threading
 
-from .config import DB_PATH, DEFAULT_INPUT, DEFAULT_MODEL, DEFAULT_WORKERS
+from .config import DB_PATH, DEFAULT_INPUT
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS items(
@@ -30,8 +30,6 @@ CREATE TABLE IF NOT EXISTS items(
   faces_done INTEGER DEFAULT 0, face_count INTEGER DEFAULT 0,
   -- step 4: text
   ocr_done INTEGER DEFAULT 0, ocr_text TEXT,
-  -- step 6: optional Qwen second opinion
-  description TEXT, ai_verdict TEXT, ai_reason TEXT, ai_ms INTEGER, ai_error TEXT, analyzed_at REAL,
   -- result
   decision TEXT, bucket TEXT, reason TEXT, decided_at REAL,
   user_decision TEXT, gone INTEGER DEFAULT 0
@@ -129,18 +127,6 @@ def get_setting(k, default=None):
 
 def set_setting(k, v):
     write("INSERT INTO settings(k, v) VALUES(?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", (k, str(v)))
-
-
-def model():
-    return get_setting("model", DEFAULT_MODEL)
-
-
-def workers():
-    return max(1, min(8, int(get_setting("workers", DEFAULT_WORKERS))))
-
-
-def use_qwen():
-    return get_setting("use_qwen", "1") == "1"
 
 
 def input_dir():

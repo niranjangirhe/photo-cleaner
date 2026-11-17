@@ -10,7 +10,9 @@ Photo Cleaner tags a Google Takeout export with local open models, groups faces 
 
 ## Pipeline (cleaner/pipeline.py, one model on the GPU at a time)
 
-scan -> dupes -> tagger (SigLIP 2, GPU/MPS/CPU) -> faces (SCRFD + ArcFace via onnxruntime, CPU) -> people (mutual-kNN grouping) -> ocr (RapidOCR, CPU, texty types only) -> rules -> optional Qwen via Ollama (llm.py, bucket 'poor' only).
+scan -> dupes -> tagger (SigLIP 2, GPU/MPS/CPU) -> faces (SCRFD + ArcFace via onnxruntime, CPU) -> people (mutual-kNN grouping) -> ocr (RapidOCR, CPU, texty types only) -> rules.
+
+- `textrules.py`: plain word lists (important, receipt, receipt_keep, check, throwaway) that `rules.py` applies to the OCR text. Entries starting with "re:" are regular expressions.
 
 - The photos folder is a setting (`db.input_dir()`), picked in the dashboard. Switching folders clears the old results.
 - `taglist.py`: phrasings are averaged per tag. Types and events use softmax; scenes use softmax against a plain "a photo." background. SigLIP's sigmoid probabilities are tiny for these prompts, so don't threshold on them.
@@ -22,6 +24,6 @@ scan -> dupes -> tagger (SigLIP 2, GPU/MPS/CPU) -> faces (SCRFD + ArcFace via on
 ## Running and checking
 
 - Native: `.\setup.ps1` / `./setup.sh`, then `.\start.ps1` / `./start.sh`.
-- Docker: `docker compose up` (CPU) or add `-f docker-compose.gpu.yml`.
+- Docker: `docker compose up` (CPU) or `docker compose -f nvidia.yml up` (NVIDIA). Keep the two files in step.
 - Test against a separate library and data folder so a real one is never touched: set `CLEANER_INPUT`, `CLEANER_DATA` and `PORT`.
 - `python -m pyflakes app.py cleaner` should be clean; `node --check web/app.js extension/background.js`.

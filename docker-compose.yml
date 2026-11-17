@@ -1,34 +1,29 @@
 # Start:   docker compose up            then open http://127.0.0.1:8770
-# With the optional AI second opinion (Qwen through Ollama, about 6 GB more):
-#          docker compose --profile ai up
+# With an NVIDIA graphics card, use nvidia.yml instead:   docker compose -f nvidia.yml up
 #
-# Point PHOTOS at the folder with your unzipped Google Takeout, in a .env file next to this one
-# (see .env.example) or on the command line:  PHOTOS=/path/to/Takeout docker compose up
-# The folder is shared read-only: the app can never change your photos.
+# Your photos: unzip your Google Takeout into the "input" folder next to this file, or point PHOTOS at
+# another folder in a .env file (see .env.example). The folder is shared read-only: the app can never
+# change your photos.
+
+# A fixed name: Docker's storage is named after the project, not the folder, so renaming or moving
+# this folder keeps your downloaded models and results.
+name: photo-cleaner
 
 services:
   photo-cleaner:
     build: .
     image: photo-cleaner
+    pull_policy: build                # built on your computer, never downloaded from Docker Hub
     ports:
       - "127.0.0.1:8770:8770"         # only reachable from this computer
     volumes:
       - "${PHOTOS:-./input}:/photos:ro"
-      - photo-cleaner-data:/data      # results, previews, face crops
-      - photo-cleaner-models:/models  # downloaded models (~5 GB), kept between runs
+      - data:/data                    # results, previews, face crops
+      - models:/models                # downloaded models (~5 GB), kept between runs
     environment:
-      OLLAMA_URL: "${OLLAMA_URL:-http://ollama:11434}"
-      CLEANER_OLLAMA_WAIT: "30"       # give the Ollama container time to start
-    restart: unless-stopped
-
-  ollama:
-    image: ollama/ollama:0.40.13
-    profiles: ["ai"]
-    volumes:
-      - ollama-models:/root/.ollama
+      HF_TOKEN: "${HF_TOKEN:-}"       # optional: a Hugging Face token makes the first download faster
     restart: unless-stopped
 
 volumes:
-  photo-cleaner-data:
-  photo-cleaner-models:
-  ollama-models:
+  data:
+  models:

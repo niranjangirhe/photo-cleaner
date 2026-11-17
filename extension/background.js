@@ -4,7 +4,7 @@
 const ports = new Set();
 let run = null;
 
-chrome.action.onClicked.addListener(() => chrome.tabs.create({ url: "http://127.0.0.1:8770/?view=approved" }));
+chrome.action.onClicked.addListener(() => chrome.tabs.create({ url: "http://127.0.0.1:8770/#approved" }));
 
 chrome.runtime.onConnect.addListener(port => {
   if (port.name !== "dashboard") return;

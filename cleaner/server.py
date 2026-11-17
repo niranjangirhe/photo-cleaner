@@ -9,7 +9,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import db, download, llm, people, rules, tagger
+from . import db, download, people, rules, tagger
 from .config import BROWSE_ROOTS, FACES, HOST, IMG, PREVIEWS, THUMBS, VID, WEB
 from .pipeline import STEPS, runner
 
@@ -19,8 +19,8 @@ TAGS = "(SELECT group_concat(tag) FROM item_tags WHERE item_id=items.id AND tag 
 # for a spare copy: the photo of its group that is being kept, so both can be shown side by side
 KEEPER = ("(SELECT k.id FROM items k WHERE items.dup_best=0 AND k.dup_group=items.dup_group AND k.dup_best=1 "
           "AND k.alias_of IS NULL LIMIT 1)")
-FIELDS = ("id, name, folder, kind, ext, bytes, w, h, duration, taken, mtime, type, event, face_count, description, "
-          "decision, bucket, reason, user_decision, gurl, gone, dup_group, dup_kind, dup_best, frames, ai_verdict, ai_reason, "
+FIELDS = ("id, name, folder, kind, ext, bytes, w, h, duration, taken, mtime, type, event, face_count, "
+          "decision, bucket, reason, user_decision, gurl, gone, dup_group, dup_kind, dup_best, frames, "
           "origin, favorite, in_storage, g_people, "
           f"{PERSONS} AS persons, {TAGS} AS tags, {KEEPER} AS keeper")
 
@@ -39,23 +39,6 @@ BROWSER_IMG = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 BROWSER_VID = {".mp4", ".webm", ".m4v", ".mov"}
 YEAR = "strftime('%Y', COALESCE(taken, mtime), 'unixepoch')"
 TEXTY = "('screenshot', 'document', 'id_card', 'receipt', 'note')"
-
-_ollama = {"t": 0, "v": None}
-
-
-def ollama_status():
-    if time.time() - _ollama["t"] > 5:
-        try:
-            _ollama["v"] = {"ok": True, "models": llm.models()}
-        except llm.OllamaError as e:
-            _ollama["v"] = {"ok": False, "error": str(e), "models": []}
-        _ollama["t"] = time.time()
-    v = dict(_ollama["v"])
-    v["model"] = db.model()
-    v["model_ready"] = llm.has(v["model"], v["models"])
-    v["enabled"] = db.use_qwen()
-    return v
-
 
 def where(q, skip=None):
     c, p = [VIEWS.get(q.get("view", "delete"), VIEWS["delete"])], []
@@ -116,7 +99,6 @@ def status():
         SUM(lat IS NOT NULL AND alias_of IS NULL AND status != 'skipped') AS located,
         SUM(kind='photo' AND alias_of IS NULL AND type IN {TEXTY}) AS texty,
         SUM(ocr_done=1) AS read,
-        SUM(ai_verdict IS NOT NULL) AS analyzed,
         SUM(alias_of IS NULL AND status != 'skipped' AND decision IS NULL AND user_decision IS NULL) AS pending,
         SUM(decision='delete' AND user_decision IS NULL) AS s_delete,
         COALESCE(SUM(CASE WHEN decision='delete' AND user_decision IS NULL THEN bytes END), 0) AS s_delete_bytes,
@@ -132,8 +114,8 @@ def status():
     c = {k: (v or 0) for k, v in c.items()}
     c["people"] = db.one("SELECT COUNT(*) AS n FROM persons WHERE hidden=0")["n"]
     c["groups"] = db.one("SELECT COUNT(DISTINCT dup_group) AS n FROM items WHERE dup_group IS NOT NULL")["n"]
-    return {"run": runner.snapshot(), "steps": STEPS, "counts": c, "ollama": ollama_status(),
-            "models": download.status(), "input": db.input_dir(), "workers": db.workers()}
+    return {"run": runner.snapshot(), "steps": STEPS, "counts": c,
+            "models": download.status(), "input": db.input_dir()}
 
 
 def items(q):
@@ -197,6 +179,13 @@ def groups(q):
     return {"groups": gs, "total": total}
 
 
+def group(q):
+    """All photos in one duplicate group, the suggested keeper first."""
+    gid = int(q["id"])
+    return db.rows(f"SELECT {FIELDS}, sharp FROM items WHERE dup_group=? AND alias_of IS NULL "
+                   "ORDER BY dup_best DESC, bytes DESC", (gid,))
+
+
 def persons(q):
     hidden = 1 if q.get("hidden") == "1" else 0
     return db.rows("""SELECT p.id, p.name, p.name_auto, p.cover_face, p.faces, p.items,
@@ -206,7 +195,7 @@ def persons(q):
 
 
 def item_detail(iid):
-    it = db.one(f"SELECT {FIELDS}, path, ocr_text, sharp, scan_error, ai_error, ai_ms, type_score, event_score "
+    it = db.one(f"SELECT {FIELDS}, path, ocr_text, sharp, scan_error, type_score, event_score "
                 "FROM items WHERE id=?", (iid,))
     if not it:
         return None
@@ -392,15 +381,14 @@ class Handler(BaseHTTPRequestHandler):
             if p in routes:
                 return self.send(200, routes[p]())
             qroutes = {"/api/items": items, "/api/facets": facets, "/api/groups": groups, "/api/people": persons,
-                       "/api/geo": geo, "/api/folders": folders}
+                       "/api/geo": geo, "/api/folders": folders, "/api/group": group}
             if p in qroutes:
                 return self.send(200, qroutes[p](q))
             if p == "/api/item":
                 it = item_detail(int(q["id"]))
                 return self.send(200 if it else 404, it or {"error": "not found"})
             if p == "/api/settings":
-                return self.send(200, {"model": db.model(), "workers": db.workers(), "use_qwen": db.use_qwen(),
-                                       "ollama": ollama_status(), "input": db.input_dir()})
+                return self.send(200, {"input": db.input_dir()})
             if p == "/api/export.csv":
                 return self.send(200, export_csv(), "text/csv; charset=utf-8",
                                  {"Content-Disposition": 'attachment; filename="photos-to-delete.csv"'})
@@ -465,15 +453,6 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/folder":
                 code, out = set_folder(body)
                 return self.send(code, out)
-            if p == "/api/settings":
-                if body.get("model"):
-                    db.set_setting("model", str(body["model"]).strip())
-                if body.get("workers"):
-                    db.set_setting("workers", max(1, min(8, int(body["workers"]))))
-                if "use_qwen" in body:
-                    db.set_setting("use_qwen", "1" if body["use_qwen"] else "0")
-                _ollama["t"] = 0
-                return self.send(200, {"ok": True})
             self.send(404, {"error": "not found"})
         except Exception as e:
             self.send(400, {"error": str(e)})

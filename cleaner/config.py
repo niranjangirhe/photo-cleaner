@@ -30,11 +30,6 @@ SIGLIP_DIR = os.path.join(MODELS, "siglip2")
 FACE_DIR = os.path.join(MODELS, "buffalo_l")
 FACE_URL = "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip"
 
-# Optional second opinion through Ollama
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
-DEFAULT_MODEL = os.environ.get("CLEANER_MODEL", "qwen2.5vl:7b")
-DEFAULT_WORKERS = int(os.environ.get("CLEANER_WORKERS", 2))
-
 # Web server. 127.0.0.1 keeps it private to this computer; Docker sets 0.0.0.0 inside the container
 # and publishes the port on the host's 127.0.0.1 only.
 HOST = os.environ.get("CLEANER_HOST", "127.0.0.1")

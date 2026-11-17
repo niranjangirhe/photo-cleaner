@@ -1,7 +1,7 @@
 # Photo Cleaner. Works on Windows, macOS (Intel and Apple Silicon) and Linux.
 #
 #   docker compose up                     processor only, runs everywhere
-#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up    NVIDIA graphics card
+#   docker compose -f nvidia.yml up       NVIDIA graphics card
 #
 # The models are not baked into the image: they are downloaded on first start into the "models" volume.
 

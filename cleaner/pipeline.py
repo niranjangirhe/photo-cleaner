@@ -1,7 +1,6 @@
 """Runs every step in a background thread, one model at a time. Pause any time; Start picks up where it stopped.
 
-  scan -> duplicates -> tags (SigLIP 2) -> faces (InsightFace) -> people -> text (RapidOCR)
-       -> suggestions -> second opinion (Qwen via Ollama, only for unclear blurry/dark photos)
+  scan -> duplicates -> tags (SigLIP 2) -> faces (InsightFace) -> people -> text (RapidOCR) -> suggestions
 """
 import collections
 import os
@@ -9,14 +8,12 @@ import shutil
 import threading
 import time
 import traceback
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
-from . import db, download, dupes, faces, llm, ocr, people, rules, scan, tagger
+from . import db, download, dupes, faces, ocr, people, rules, scan, tagger
 from .config import FACES, PREVIEWS, THUMBS
 
 STEPS = [("scan", "Scan files"), ("group", "Duplicates"), ("tag", "Tags"), ("faces", "Faces"),
-         ("people", "People"), ("ocr", "Read text"), ("decide", "Suggestions"), ("review", "AI second opinion")]
-ITEM_COLS = "id, name, folder, ext, kind, bytes, w, h, duration, taken, frames, type, event, face_count"
+         ("people", "People"), ("ocr", "Read text"), ("decide", "Suggestions")]
 META_TAGS = ["whatsapp", "quick_share", "social_app", "shared_album", "creation_auto", "creation_manual",
              "favorite", "google_people"]
 
@@ -29,7 +26,7 @@ class Runner:
         self.finished = collections.deque(maxlen=60)
         self.recent = collections.deque(maxlen=36)  # ids the current step just finished, for the live feed
         self.state = {"phase": "idle", "done": 0, "total": 0, "message": "Pick your photos folder, then press Start.",
-                      "started": None, "phase_started": None, "working": [], "error": None}
+                      "started": None, "phase_started": None, "error": None}
 
     def running(self):
         return bool(self.thread and self.thread.is_alive())
@@ -71,13 +68,12 @@ class Runner:
             self.recent.clear()
             self.finished.clear()
             self.state = {"phase": "idle", "done": 0, "total": 0, "started": None, "phase_started": None,
-                          "working": [], "error": None,
+                          "error": None,
                           "message": "Everything was cleared. Press Start to process your photos again."}
 
     def snapshot(self):
         with self.lock:
             s = dict(self.state)
-            s["working"] = list(s["working"])
             fin = list(self.finished)
         s["running"] = self.running()
         s["stopping"] = self.stop.is_set() and s["running"]
@@ -115,10 +111,10 @@ class Runner:
             missing = [n for n, ok in (("SigLIP 2", st["siglip"]), ("face models", st["faces"]),
                                        ("RapidOCR", st["ocr"])) if not ok]
             if missing:
-                self._set(phase="waiting", message=f"Missing: {', '.join(missing)}. Run setup.ps1 to download the models.")
+                self._set(phase="waiting", message=f"Missing: {', '.join(missing)}. Run the setup again to download the models.")
                 return
             steps = [("scan", scan.run), ("group", self._group), ("tag", tagger.run), ("faces", faces.run),
-                     ("people", people.run), ("ocr", ocr.run), ("decide", self._decide), ("review", self._review)]
+                     ("people", people.run), ("ocr", ocr.run), ("decide", self._decide)]
             for name, fn in steps:
                 self._set(phase=name, message=dict(STEPS)[name] + "...")
                 fn(self.stop, self._progress)
@@ -126,14 +122,14 @@ class Runner:
                     tagger.unload()  # free the graphics card for the next steps
                 if self._paused():
                     return
-            self._set(phase="done", working=[], message="All done. Review the suggestions below.")
+            self._set(phase="done", message="All done. Review the suggestions below.")
         except Exception as e:
             traceback.print_exc()
-            self._set(phase="error", error=str(e), working=[], message="Something went wrong: " + str(e)[:300])
+            self._set(phase="error", error=str(e), message="Something went wrong: " + str(e)[:300])
 
     def _paused(self):
         if self.stop.is_set():
-            self._set(phase="paused", working=[], message="Paused. Press Continue to carry on where it stopped.")
+            self._set(phase="paused", message="Paused. Press Continue to carry on where it stopped.")
             return True
         return False
 
@@ -154,69 +150,6 @@ class Runner:
     def _decide(self, stop, progress):
         progress(0, 0, "Working out suggestions...")
         rules.refresh()
-
-    # ----- optional Qwen second opinion -----
-    def _review(self, stop, progress):
-        if not db.use_qwen():
-            return
-        model = db.model()
-        try:
-            names = llm.models()
-        except llm.OllamaError:
-            progress(0, 0, "Ollama isn't running, skipping the AI second opinion.")
-            return
-        if not llm.has(model, names):
-            progress(0, 0, f"{model} isn't downloaded, skipping the AI second opinion.")
-            return
-        db.write("UPDATE items SET ai_error=NULL WHERE ai_error IS NOT NULL")
-        todo = [r["id"] for r in db.rows("SELECT id FROM items WHERE decision='unsure' AND bucket='poor' "
-                                         "AND ai_verdict IS NULL AND user_decision IS NULL ORDER BY bytes DESC")]
-        total = len(todo)
-        if not total:
-            return
-        progress(0, total, f"Qwen is taking a second look at {total:,} unclear photos")
-        done, fails, it_todo = 0, 0, iter(todo)
-        with ThreadPoolExecutor(db.workers()) as ex:
-            running = {}
-
-            def fill():
-                while len(running) < db.workers() * 2 and not stop.is_set():
-                    iid = next(it_todo, None)
-                    if iid is None:
-                        return
-                    running[ex.submit(self._one, iid, model)] = iid
-
-            fill()
-            while running:
-                self._set(working=list(running.values())[:db.workers()])
-                fin, _ = wait(running, return_when=FIRST_COMPLETED)
-                for f in fin:
-                    self.recent.append(running.pop(f))
-                    ok, err = f.result()
-                    done += 1
-                    fails = 0 if ok else fails + 1
-                    if isinstance(err, llm.OllamaError) and fails >= 3:
-                        stop.set()
-                        self._set(error=str(err))
-                progress(done, total, f"Second opinion on {done:,} of {total:,}")
-                fill()
-        self._set(working=[])
-
-    def _one(self, iid, model):
-        it = db.one(f"SELECT {ITEM_COLS} FROM items WHERE id=?", (iid,))
-        it["tags"] = [r["tag"] for r in db.rows("SELECT tag FROM item_tags WHERE item_id=? AND tag!='textlike'", (iid,))]
-        if it["type"]:
-            it["tags"].insert(0, it["type"])
-        try:
-            ans, ms = llm.analyze(it, model)
-            keys = list(ans)
-            db.write(f"UPDATE items SET {', '.join(k + '=?' for k in keys)}, ai_ms=?, analyzed_at=? WHERE id=?",
-                     [ans[k] for k in keys] + [ms, time.time(), iid])
-            rules.refresh([iid])
-            return True, None
-        except Exception as e:
-            db.write("UPDATE items SET ai_error=? WHERE id=?", (str(e)[:300], iid))
-            return False, e
 
 
 runner = Runner()

@@ -16,7 +16,6 @@ fi
 echo "Installing the other packages..."
 .venv/bin/python -m pip install -q -r requirements.txt
 echo "Downloading the models..."
-.venv/bin/python -m cleaner.download --ollama || { echo "A model download failed. Run ./setup.sh again to retry."; exit 1; }
+.venv/bin/python -m cleaner.download || { echo "A model download failed. Run ./setup.sh again to retry."; exit 1; }
 command -v ffmpeg >/dev/null 2>&1 || echo "Optional: install ffmpeg so short videos can be checked (macOS: brew install ffmpeg)"
-command -v ollama >/dev/null 2>&1 || echo "Optional: install Ollama from ollama.com for the AI second opinion, then run ./setup.sh again."
 echo "Setup done. Next: ./start.sh"

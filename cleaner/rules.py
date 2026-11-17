@@ -1,40 +1,15 @@
 """Turns everything the models found into one suggestion per item: keep, delete or unsure.
 Errs on the side of keeping: losing a memory is worse than keeping junk."""
 import json
-import re
 import time
 
-from . import db
-
-# Text that means "keep this"
-KEEP_WORDS = re.compile(
-    r"passport|aadhaa?r|\bpan\b|permanent account|driving licen|licen[cs]e no|voter|election commission|"
-    r"certificate|marksheet|mark sheet|grade sheet|transcript|degree|diploma|"
-    r"insurance|policy no|prescription|diagnos|hospital|lab report|medical|"
-    r"account no|a/c no|ifsc|cheque|salary|payslip|pay slip|offer letter|appointment letter|"
-    r"agreement|deed|registration no|form 16|income tax|visa|birth certificate", re.I)
-# Text that means "you may still need this, check"
-MAYBE_WORDS = re.compile(
-    r"ticket|boarding pass|\bpnr\b|booking|reservation|itinerary|invoice|warranty|guarantee|"
-    r"\bbill\b|receipt no|order id|tracking", re.I)
-# Text that means "this is throwaway"
-JUNK_WORDS = re.compile(
-    r"\botp\b|one.time password|verification code|is your code|security code|"
-    r"delivered|out for delivery|arriving|order (placed|confirmed|shipped)|"
-    r"payment (successful|received|done)|paid to|sent to|cashback|\d+% off|\bsale\b|offer ends|"
-    r"followers|following|likes|reels|subscribe|\btyping\b|last seen|\bonline\b|forwarded|"
-    r"good morning|good night|battery|wi-?fi", re.I)
+from . import db, textrules
 
 EVENT_LABEL = {"pre_wedding": "Haldi, mehndi or sangeet", "baby_shower": "Baby shower", "ganesh": "Ganesh Chaturthi",
                "navratri": "Navratri / Garba", "raksha_bandhan": "Raksha Bandhan", "new_year": "New Year",
                "festival": "Festival", "eid": "Eid", "diwali": "Diwali", "holi": "Holi"}
 TYPE_LABEL = {"photo": "Photo", "screenshot": "Screenshot", "document": "Document", "id_card": "ID card",
               "receipt": "Receipt", "note": "Note", "meme": "Meme", "greeting": "Greeting", "artwork": "Artwork"}
-
-
-def _match(rx, text):
-    m = rx.search(text or "")
-    return m.group(0).lower() if m else None
 
 
 def decide(it, tags, known):
@@ -79,8 +54,10 @@ def _decide(it, tags, known):
     text = it["ocr_text"] or ""
     if texty and (it["type_score"] or 0) < 0.5 and len(text.strip()) < 10:
         typ = "photo"  # a weak "screenshot/document" guess with no text in it: judge it as a photo
-    keep_w, maybe_w, junk_w = _match(KEEP_WORDS, text), _match(MAYBE_WORDS, text), _match(JUNK_WORDS, text)
-    ai = it["ai_verdict"]
+    keep_w, check_w, junk_w = (textrules.first("important", text), textrules.first("check", text),
+                               textrules.first("throwaway", text))
+    if photo and typ in ("photo", "screenshot", "document", "note") and textrules.count("receipt", text) >= 2:
+        typ = "receipt"  # e.g. "total", "gst" and "qty" together: a bill, whatever it looked like
     who = f"{people} {'person' if people == 1 else 'people'}" if people else ""
     if it["g_people"]:
         try:
@@ -101,8 +78,8 @@ def _decide(it, tags, known):
     if typ == "screenshot" and not photo:
         return "unsure", "check", "Looks like a screen recording"
     if typ == "screenshot":
-        if maybe_w:
-            return "unsure", "ticket", f"Screenshot mentions \"{maybe_w}\", check if you still need it"
+        if check_w:
+            return "unsure", "ticket", f"Screenshot mentions \"{check_w}\", check if you still need it"
         if known:
             return "unsure", "check", "Screenshot with someone you know in it"
         return "delete", "screenshot", f"Screenshot ({junk_w})" if junk_w else "Old screenshot"
@@ -111,8 +88,11 @@ def _decide(it, tags, known):
             return "unsure", "check", f"Looks like a {typ}, but someone you know is in it"
         return "delete", "meme", "Forwarded greeting image" if typ == "greeting" else "Forwarded meme or picture"
     if typ == "receipt":
-        if maybe_w:
-            return "unsure", "ticket", f"Receipt mentions \"{maybe_w}\", check if you still need it"
+        keep_bill = textrules.first("receipt_keep", text)
+        if keep_bill:
+            return "unsure", "ticket", f"Bill mentions \"{keep_bill}\", you may still need it"
+        if check_w:
+            return "unsure", "ticket", f"Receipt mentions \"{check_w}\", check if you still need it"
         return "delete", "receipt", "Old receipt or bill"
     if typ == "note":
         return "unsure", "note", "Handwritten note or whiteboard, check if you still need it"
@@ -133,11 +113,9 @@ def _decide(it, tags, known):
         reason = why[bad[0]] if bad else "Very short clip, maybe recorded by accident"
         if people or known:
             return "unsure", "poor_people", f"{reason}, but has {who or 'people'}"
-        if ai == "keep":
-            return "keep", "photo", f"{reason}, but the AI thinks it's worth keeping: {it['ai_reason'] or ''}".strip(": ")
-        if ai == "delete" or bad and bad[0] in ("accidental", "dark"):
+        if bad and bad[0] in ("accidental", "dark"):
             return "delete", "poor", reason
-        return "unsure", "poor", reason
+        return "unsure", "poor", reason  # blurry or a very short clip: you decide
 
     bits = [EVENT_LABEL.get(it["event"], (it["event"] or "").replace("_", " ").capitalize()) if it["event"]
             else TYPE_LABEL.get(typ, "Photo")]
@@ -148,7 +126,7 @@ def _decide(it, tags, known):
 
 COLS = ("id, status, kind, alias_of, dup_group, dup_kind, dup_best, contrast, sharp, bright, frames, duration, type, "
         "type_score, event, favorite, origin, g_people, user_decision, "
-        "face_count, faces_done, ocr_done, ocr_text, ai_verdict, ai_reason")
+        "face_count, faces_done, ocr_done, ocr_text")
 
 
 def refresh(ids=None):
