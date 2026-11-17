@@ -50,22 +50,23 @@ You need [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Wind
    PHOTOS=C:/Users/you/Downloads/Takeout
    ```
    On macOS that looks like `PHOTOS=/Users/you/Downloads/Takeout`. Docker shares only this folder with the app, read-only.
-3. Start it:
-   ```
-   docker compose up
-   ```
-   The first start builds the image and downloads the models (about 5 GB), so give it a while. Later starts take seconds.
+3. Start it with the one command that matches your computer:
+
+   | Your computer | Command |
+   |---|---|
+   | Any computer, including Macs and laptops without an NVIDIA card | `docker compose up` |
+   | Same, plus the AI second opinion | `docker compose --profile ai up` |
+   | Has an NVIDIA graphics card | `docker compose -f docker-compose.yml -f docker-compose.gpu.yml up` |
+   | Has an NVIDIA graphics card, plus the AI second opinion | `docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile ai up` |
+
+   Plain `docker compose up` is the default: it runs everything on the processor, works on every computer, and skips the AI second opinion.
+
+   - The **NVIDIA** commands make tagging several times faster. They need Windows with WSL 2, or Linux with the NVIDIA Container Toolkit installed.
+   - The **AI second opinion** (`--profile ai`) adds Qwen2.5-VL, which takes another look at photos that seem blurry or accidental. It's optional and downloads about 6 GB more. Everything else works without it.
+   - **On a Mac**, use one of the first two commands. Docker can't use the Mac's graphics chip, so it runs on the processor: that works, just slower. For full speed on Apple Silicon, run it without Docker, as described below.
+
+   The first start builds the image and downloads the models (about 5 GB, or about 11 GB with the second opinion), so give it a while. Later starts take seconds. Use the same command each time you start it.
 4. Open http://127.0.0.1:8770 and press Start.
-
-To add the optional AI second opinion (Qwen2.5-VL, about 6 GB more), start with `docker compose --profile ai up` instead.
-
-With an NVIDIA graphics card (Windows with WSL 2, or Linux with the NVIDIA Container Toolkit installed), tagging runs much faster:
-
-```
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
-```
-
-On a Mac, Docker can't use the Mac's graphics chip, so it runs on the processor. That works, just slower. For full speed on Apple Silicon, run it without Docker as described next.
 
 ## Running without Docker
 
