@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Photo Cleaner helper",
+  "version": "1.0.0",
+  "description": "Moves the photos you approved in Photo Cleaner to the Google Photos trash, one by one, in your own logged-in browser.",
+  "permissions": ["tabs", "scripting"],
+  "host_permissions": ["https://photos.google.com/*", "http://127.0.0.1/*", "http://localhost/*"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    { "matches": ["http://127.0.0.1/*", "http://localhost/*"], "js": ["bridge.js"], "run_at": "document_start" }
+  ],
+  "action": { "default_title": "Open Photo Cleaner" }
+}

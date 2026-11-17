@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Photo Cleaner</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23e8623a'/><path d='M9 22l5-6 4 4 3-3 4 5z' fill='white'/><circle cx='21' cy='11' r='2.5' fill='white'/></svg>">
+<link rel="stylesheet" href="/static/vendor/leaflet.css">
+<link rel="stylesheet" href="/static/vendor/MarkerCluster.css">
+<link rel="stylesheet" href="/static/vendor/MarkerCluster.Default.css">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <div class="logo" aria-hidden="true"></div>
+    <div>
+      <h1>Photo Cleaner</h1>
+      <button class="sub linklike" id="inputPath" title="Change the photos folder">photos folder</button>
+    </div>
+  </div>
+  <div class="top-actions">
+    <button class="pill" id="ollamaPill" title="AI second opinion (Qwen through Ollama)">checking…</button>
+    <button class="icon-btn" id="themeBtn" title="Light / dark">◐</button>
+    <button class="icon-btn" id="settingsBtn" title="Settings">⚙</button>
+    <button class="btn primary" id="runBtn">Start</button>
+  </div>
+</header>
+
+<main>
+  <section class="card progress">
+    <ol class="steps" id="steps"></ol>
+    <div class="msg" id="msg">Loading…</div>
+    <div class="bar"><div id="barFill"></div></div>
+    <div class="meta" id="meta"></div>
+    <div class="banner" id="banner" hidden></div>
+  </section>
+
+  <section class="stats" id="stats">
+    <button class="stat" data-view="all"><div class="k">Library</div><div class="v" id="sLib">0</div><div class="s" id="sLibB">0 GB</div></button>
+    <button class="stat del" data-view="delete"><div class="k">Suggested delete</div><div class="v" id="sDel">0</div><div class="s" id="sDelB">0 GB</div></button>
+    <button class="stat uns" data-view="unsure"><div class="k">Unsure, needs a look</div><div class="v" id="sUns">0</div><div class="s" id="sUnsB">0 GB</div></button>
+    <button class="stat keep" data-view="keep"><div class="k">Keeping</div><div class="v" id="sKeep">0</div><div class="s" id="sKeepB">0 GB</div></button>
+    <button class="stat ppl" data-view="people"><div class="k">People found</div><div class="v" id="sPpl">0</div><div class="s" id="sPplB">in 0 photos</div></button>
+    <button class="stat appr" data-view="approved"><div class="k">Approved for delete</div><div class="v" id="sAppr">0</div><div class="s" id="sApprB">frees 0 GB</div></button>
+  </section>
+
+  <section class="live">
+    <div class="card now">
+      <div class="card-h"><h2 id="nowTitle">Latest result</h2><span class="dim" id="nowTime"></span></div>
+      <div class="now-body" id="nowBody"><div class="empty">Results show up here as each photo is done.</div></div>
+    </div>
+    <div class="card feed">
+      <div class="card-h"><h2 id="feedTitle">Just finished</h2><span class="legend"><i class="d-keep"></i>suggested keep <i class="d-delete"></i>suggested delete <i class="d-unsure"></i>unsure</span></div>
+      <div class="feed-grid" id="feed"></div>
+    </div>
+  </section>
+
+  <section class="card review">
+    <nav class="tabs" id="tabs">
+      <button data-view="delete">Suggested delete <b id="tDel"></b></button>
+      <button data-view="unsure">Unsure: check these <b id="tUns"></b></button>
+      <button data-view="keep">Keeping <b id="tKeep"></b></button>
+      <button data-view="groups">Duplicates <b id="tGrp"></b></button>
+      <button data-view="people">People <b id="tPpl"></b></button>
+      <button data-view="map">Map <b id="tMap"></b></button>
+      <button data-view="all">Everything <b id="tAll"></b></button>
+      <button data-view="approved">Approved for delete <b id="tAppr"></b></button>
+      <button data-view="deleted">Deleted in Google <b id="tGone"></b></button>
+      <button data-view="pending">Still processing <b id="tPend"></b></button>
+    </nav>
+    <p class="hint" id="hint"></p>
+
+    <div class="person-head" id="personHead" hidden></div>
+
+    <div class="mapwrap" id="mapWrap" hidden>
+      <div class="map-bar">
+        <button class="btn sm" id="mapSelect">Select an area</button>
+        <button class="btn sm" id="mapOpen" hidden>Open this area in a new tab</button>
+        <button class="btn sm ghost" id="mapClear" hidden>Clear area</button>
+        <label class="check"><input type="checkbox" id="mapHeat"> Heat map</label>
+        <span class="dim small" id="mapInfo"></span>
+        <span class="dim small">Tip: hold Shift and drag to select an area.</span>
+      </div>
+      <div id="map"></div>
+    </div>
+
+    <div class="gpanel" id="gpanel" hidden>
+      <div class="gp-head">
+        <div><b>Delete in Google automatically</b>
+          <div class="dim small" id="gpState">Checking for the Photo Cleaner helper extension…</div></div>
+        <div class="gp-controls" id="gpControls" hidden>
+          <label class="check"><input type="checkbox" id="gpTest" checked> Test only (don't delete)</label>
+          <select id="gpSpeed" title="Pause between photos"><option value="careful">Careful (3–5 s pause)</option><option value="normal" selected>Normal (1–2.5 s pause)</option><option value="fast">Fast (0.5–1 s pause)</option></select>
+          <select id="gpBatch" title="How many to do in this run"><option value="5">First 5</option><option value="25">First 25</option><option value="100">First 100</option><option value="0">All not deleted yet</option></select>
+          <button class="btn danger" id="gpStart">Start</button>
+          <button class="btn ghost" id="gpStop" hidden>Stop</button>
+        </div>
+      </div>
+      <div class="gp-progress" id="gpProgress" hidden></div>
+      <ol class="gp-log" id="gpLog"></ol>
+    </div>
+
+    <div class="filters" id="filters">
+      <form class="search" id="searchForm"><input type="search" id="searchIn" placeholder="Search by description, e.g. &quot;birthday cake&quot; or &quot;whatsapp forward&quot;"><button class="btn sm" type="submit">Search</button></form>
+      <div class="selects">
+        <select id="fType" data-f="type"><option value="">Any type</option></select>
+        <select id="fEvent" data-f="event"><option value="">Any event</option></select>
+        <select id="fTag" data-f="tag"><option value="">Any tag</option></select>
+        <select id="fYear" data-f="year"><option value="">Any year</option></select>
+        <select id="fKind" data-f="kind"><option value="">Photos and videos</option><option value="photo">Photos</option><option value="video">Videos</option></select>
+        <select id="sortSel"><option value="size">Biggest first</option><option value="date">Newest first</option><option value="oldest">Oldest first</option><option value="recent">Recently decided</option><option value="relevance">Best search match</option></select>
+        <button class="btn sm ghost" id="clearFilters" hidden>Clear filters</button>
+      </div>
+    </div>
+    <div class="chips" id="chips"></div>
+    <div class="toolbar" id="toolbar">
+      <span class="count" id="viewCount"></span>
+      <div class="tr" id="actions"></div>
+    </div>
+    <button class="refresh-note" id="refreshNote" hidden>New results came in. Show them</button>
+    <div class="grid" id="grid"></div>
+    <div class="groups" id="groups" hidden></div>
+    <div class="people" id="people" hidden></div>
+    <div class="more" id="more"></div>
+  </section>
+</main>
+
+<div class="selbar" id="selbar" hidden>
+  <span id="selCount">0 selected</span>
+  <div id="selActions"></div>
+  <button class="btn ghost" id="selClear">Clear</button>
+</div>
+
+<div class="modal" id="viewer" hidden>
+  <div class="viewer">
+    <div class="stage" id="stage"></div>
+    <aside class="side" id="side"></aside>
+    <button class="icon-btn close" id="vClose" title="Close (Esc)">✕</button>
+    <button class="nav prev" id="vPrev" title="Previous (←)">‹</button>
+    <button class="nav next" id="vNext" title="Next (→)">›</button>
+  </div>
+</div>
+
+<div class="modal" id="settings" hidden>
+  <div class="dialog">
+    <div class="card-h"><h2>Settings</h2><button class="icon-btn" data-close>✕</button></div>
+    <label class="check"><input type="checkbox" id="qwenOn"> AI second opinion on unclear photos (Qwen through Ollama)</label>
+    <div class="dim small">Only blurry, dark or accidental-looking photos without people get it. Adds a few minutes.</div>
+    <label class="field">Ollama model
+      <input id="modelIn" list="modelList"><datalist id="modelList"></datalist>
+    </label>
+    <div class="dim small" id="modelNote"></div>
+    <label class="field">Photos sent to Ollama at the same time
+      <input type="number" id="workersIn" min="1" max="8">
+    </label>
+    <div class="field">Photos folder
+      <div class="folder-row"><code id="inputCode"></code><button class="btn sm" id="pickFolder" type="button">Change…</button></div>
+    </div>
+    <div class="dim small">The folder with your unzipped Google Takeout (or any photos). Press Continue after adding more files to it: only new ones get processed.</div>
+    <div class="dialog-actions"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="saveSettings">Save</button></div>
+    <div class="danger-zone">
+      <div><b>Start over</b><div class="dim small">Clears every result so you can run it again from scratch. Your photos and the downloaded models aren't touched.</div></div>
+      <button class="btn del" id="resetBtn">Start over…</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="picker" hidden>
+  <div class="dialog picker">
+    <div class="card-h"><h2>Pick your photos folder</h2><button class="icon-btn" data-close>✕</button></div>
+    <div class="dim small">Choose the folder with your unzipped Google Takeout. Subfolders are included. Your photos are only read, never changed.</div>
+    <div class="picker-path"><button class="btn sm ghost" id="pkUp" type="button">↑ Up</button><code id="pkPath"></code></div>
+    <div class="picker-roots" id="pkRoots"></div>
+    <ul class="picker-list" id="pkList"></ul>
+    <div class="dialog-actions"><span class="dim small" id="pkInfo"></span><button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="pkUse" type="button">Use this folder</button></div>
+  </div>
+</div>
+
+<div class="modal" id="confirm" hidden>
+  <div class="dialog small-dialog">
+    <h2 id="cTitle"></h2>
+    <p id="cText"></p>
+    <div class="dialog-actions"><button class="btn ghost" data-close>Cancel</button><button class="btn danger" id="cOk">Yes</button></div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+<script src="/static/vendor/leaflet.js"></script>
+<script src="/static/vendor/leaflet.markercluster.js"></script>
+<script src="/static/vendor/leaflet-heat.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

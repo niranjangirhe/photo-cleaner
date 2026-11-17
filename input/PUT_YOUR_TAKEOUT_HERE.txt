@@ -1,0 +1,2 @@
+Unzip your Google Takeout (Google Photos) here, or pick any other folder in the dashboard's Settings.
+With Docker, set PHOTOS in the .env file instead (see .env.example).

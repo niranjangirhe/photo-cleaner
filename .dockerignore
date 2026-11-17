@@ -1,0 +1,14 @@
+.git
+.venv
+__pycache__
+*.pyc
+data
+models
+input
+Demo
+extension
+*.bat
+*.ps1
+*.sh
+!docker/entrypoint.sh
+.env

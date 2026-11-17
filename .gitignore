@@ -1,0 +1,14 @@
+# Your photos and everything made from them stay on your computer
+input/*
+!input/PUT_YOUR_TAKEOUT_HERE.txt
+data/
+models/
+
+# Local settings and screen recordings (they may show your photos)
+.env
+Demo/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
