@@ -209,6 +209,8 @@ def item_detail(iid):
     it["faces"] = db.rows("""SELECT f.id, f.person_id, COALESCE(p.name, CASE WHEN p.id IS NOT NULL THEN 'Person ' || p.id END)
                              AS person FROM faces f LEFT JOIN persons p ON p.id=f.person_id
                              WHERE f.item_id=? ORDER BY f.x1""", (iid,))
+    # album copies Takeout made of the same Google item (one item in Google: deleting it removes all)
+    it["copies"] = [r["folder"] for r in db.rows("SELECT folder FROM items WHERE alias_of=? ORDER BY folder", (iid,))]
     return it
 
 

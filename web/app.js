@@ -749,7 +749,7 @@ $("#mapClear").onclick = () => { S.bbox = null; if (M.rect) { M.map.removeLayer(
 // ---------- the photo viewer ----------
 async function openViewer(list, i, from, gi) {
   if (i < 0 || !list[i]) return;
-  S.vlist = list; S.vidx = i; S.vfrom = from; S.vgroup = gi;
+  S.vlist = list; S.vidx = i; S.vfrom = from; S.vgroup = gi; S.vfocus = null; S.vpeek = null;
   $("#viewer").hidden = false;
   await renderViewer();
 }
@@ -763,27 +763,66 @@ function closeViewer() {
     pollOnce();
   }
 }
+const PER_PAGE = 4;  // duplicates side by side in the viewer
 const SHOW_ORIGINAL = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"];
 const big = it => `/${SHOW_ORIGINAL.includes(it.ext) ? "original" : "preview"}/${it.id}`;
 async function renderViewer() {
   const base = S.vlist[S.vidx];
   if (!base) return closeViewer();
-  const it = await api("/api/item?id=" + base.id).catch(() => base);
+  // S.vfocus: a group member picked by clicking, when the list itself is not the group (opened from a grid)
+  const it = await api("/api/item?id=" + (S.vfocus || base.id)).catch(() => base);
   S.vcur = it;
   // a duplicate: show its group side by side and let you pick which one to keep
   S.vmembers = it.dup_group ? await api(`/api/group?id=${it.dup_group}`).catch(() => null) : null;
-  let group = S.vmembers && S.vmembers.length > 1 ? S.vmembers.slice(0, 4) : null;
-  if (group && !group.some(m => m.id === it.id)) group[group.length - 1] = S.vmembers.find(m => m.id === it.id) || it;
+  const group = S.vmembers && S.vmembers.length > 1 ? S.vmembers : null;
+  const inGroup = S.vfrom === "group";
+  $("#vPrev").title = inGroup ? "Previous photo in this group (←)" : "Previous in the list (←)";
+  $("#vNext").title = inGroup ? "Next photo in this group (→)" : "Next in the list (→)";
   if (group) {
-    $("#stage").innerHTML = `<div class="compare">${group.map(m => {
+    // pages of 4 that stay put: the selection moves inside a page, the page turns only past its edge.
+    // The last page is filled from the one before (9 photos: 1-4, 5-8, 6-9), so it never shows a lone photo.
+    const pos = Math.max(0, group.findIndex(m => m.id === it.id));
+    const last = Math.max(0, group.length - PER_PAGE);
+    let start = S.vwin && S.vwin.g === it.dup_group ? Math.min(S.vwin.start, last) : -1;
+    if (start < 0 || pos < start || pos >= start + PER_PAGE) start = Math.min(Math.floor(pos / PER_PAGE) * PER_PAGE, last);
+    S.vwin = { g: it.dup_group, start };
+    const shown = group.slice(start, start + PER_PAGE);
+    const exact = group.filter(m => !m.dup_best).every(m => m.dup_kind === "exact");
+    const how = inGroup ? "Arrows move through this group." : "Arrows move to the next photo in the list.";
+    // the keepers (your Keep, or the tool's pick where you haven't chosen), pinned at the top to compare against
+    const keepers = group.filter(m => m.user_decision === "keep" || (!m.user_decision && m.dup_best));
+    if (S.vpeek && (S.vpeek.g !== it.dup_group || !group.some(m => m.id === S.vpeek.id))) S.vpeek = null;
+    const peek = S.vpeek && group.find(m => m.id === S.vpeek.id);
+    const fig = (m, label) => {
       const s = state(m), cls = s === "kept" ? "k" : s === "approved" || s === "gone" ? "d" : "";
       const tag = m.user_decision ? flagHtml(m) : m.dup_best ? `<span class="flag keep">Suggested keep</span>` : `<span class="flag delete">Suggested delete</span>`;
-      return `<figure class="${cls}${m.id === it.id ? " cur" : ""}">
-        <figcaption><b>${gb(m.bytes)}${m.w ? `, ${m.w}×${m.h}` : ""}</b><span>${m.sharp != null ? `sharpness ${Math.round(m.sharp)} ` : ""}${tag}</span></figcaption>
+      const chip = label ? `<span class="selchip${label === "Keeping" ? " keepchip" : ""}">${label}</span>` : m.id === it.id ? `<span class="selchip">Selected</span>` : "";
+      return `<figure class="${cls}${m.id === it.id ? " cur" : ""}" data-focus="${m.id}">
+        <figcaption><b>${chip}Photo ${group.indexOf(m) + 1}, ${gb(m.bytes)}${m.w ? `, ${m.w}×${m.h}` : ""}</b><span>${m.sharp != null ? `sharpness ${Math.round(m.sharp)} ` : ""}${tag}</span></figcaption>
         <div class="shot"><img src="${big(m)}" alt=""></div>
         <button class="btn sm pick" data-only="${m.id}">Keep only this one</button>
       </figure>`;
-    }).join("")}</div>`;
+    };
+    const keepRow = `<div class="keepers"><span>${keepers.length ? "Keeping:" : "Nothing marked keep yet."}</span>${keepers.map(m =>
+      `<button class="kp${peek && peek.id === m.id ? " on" : ""}" data-peek="${m.id}" title="${peek && peek.id === m.id ? "Close the comparison" : "Compare this one with the selected photo"}"><img src="/thumb/${m.id}" alt=""><span>${group.indexOf(m) + 1}</span></button>`).join("")}
+      ${keepers.length ? `<em>${peek ? "" : "Click one to compare it with the selected photo."}</em>` : ""}</div>`;
+    const body = peek
+      ? `<div class="compare">${fig(peek, "Keeping")}${peek.id !== it.id ? fig(it, "Selected") : ""}</div>`
+      : `<div class="compare">${shown.map(m => fig(m)).join("")}</div>`;
+    $("#stage").innerHTML = `<div class="gview">
+      <div class="ghead"><b>${exact ? "Exact copies" : "Look-alike shots"}: photo ${pos + 1} of ${group.length}</b>
+        <span>${peek ? `Comparing with kept photo ${group.indexOf(peek) + 1}. Arrows change the photo on the right. ` : group.length > PER_PAGE ? `Showing ${start + 1}–${start + shown.length}. ` : ""}${peek ? "" : how + " "}Click any photo to select it. Your choice applies to the selected one.</span>
+        ${peek ? `<button class="btn sm" data-unpeek>Back to all photos<kbd>Esc</kbd></button>` : ""}</div>
+      ${keepRow}
+      ${body}
+      ${group.length > PER_PAGE ? `<div class="dock" aria-label="Every photo in this group">${group.map((m, i) => {
+        const s = state(m), cls = s === "kept" ? "k" : s === "approved" || s === "gone" ? "d" : "";
+        const win = i >= start && i < start + PER_PAGE;
+        return `<button class="dk ${cls}${win ? " inwin" : ""}${m.id === it.id ? " cur" : ""}" data-focus="${m.id}" title="Photo ${i + 1}${m.dup_best && !m.user_decision ? ", suggested keep" : ""}">
+          <img src="/thumb/${m.id}" alt=""><span>${i + 1}</span>${m.dup_best && !m.user_decision ? `<i class="best" aria-hidden="true"></i>` : ""}</button>`;
+      }).join("")}</div>` : ""}
+    </div>`;
+    $("#stage .dk.cur")?.scrollIntoView({ block: "nearest", inline: "center" });
   } else if (it.kind === "video") {
     $("#stage").innerHTML = [".mp4", ".webm", ".m4v", ".mov"].includes(it.ext)
       ? `<video src="/original/${it.id}" controls autoplay muted playsinline poster="/preview/${it.id}"></video>` : `<img src="/preview/${it.id}" alt="">`;
@@ -818,7 +857,8 @@ async function renderViewer() {
       ${it.origin ? `<dt>Came from</dt><dd>${esc(nm(it.origin))}${it.favorite ? ", favorite" : ""}${it.in_storage === 0 ? ", doesn't use your storage" : ""}</dd>` : ""}
       <dt>File</dt><dd>${esc(it.name)}</dd>
       <dt>Folder</dt><dd>${esc(it.folder)}</dd>
-      <dt>Photo</dt><dd>${S.vidx + 1} of ${S.vlist.length}</dd>
+      ${it.copies?.length ? `<dt>Also in</dt><dd>${esc(it.copies.map(f => f.split(/[\\/]/).pop()).join(", "))} <span class="muted small">(same item in Google: deleting it removes every copy)</span></dd>` : ""}
+      <dt>${inGroup ? "In this group" : "In this list"}</dt><dd>${S.vidx + 1} of ${S.vlist.length}</dd>
     </dl>
     <p class="muted small">Keys: arrows move, K keep, D delete, U undo${group ? ", O keep only this one, B delete all of them" : ""}, G open in Google, Esc close.</p>`;
 }
@@ -847,6 +887,7 @@ async function viewerAct(a, onlyId) {
 }
 // keep the list in step; move on when a photo leaves the page it was opened from
 function afterViewerChange(it, change, advance) {
+  if (S.vfocus) return renderViewer();  // a group member picked by clicking: the list itself didn't change
   const cur = { ...S.vlist[S.vidx], ...it, ...change };
   S.vlist[S.vidx] = cur;
   if (S.vfrom === "grid" && !belongs(S.view, cur)) {
@@ -857,6 +898,7 @@ function afterViewerChange(it, change, advance) {
   return advance ? vStep(1, true) : renderViewer();
 }
 function vStep(d, quiet) {
+  S.vfocus = null;
   const n = S.vidx + d;
   if (n < 0 || n >= S.vlist.length) { if (!quiet) toast(n < 0 ? "This is the first one" : "That was the last one"); return renderViewer(); }
   S.vidx = n; return renderViewer();
@@ -872,7 +914,27 @@ $("#vside").addEventListener("click", async e => {
     setTimeout(() => { S.person = p; loadView(true); }, 0);
   }
 });
-$("#stage").addEventListener("click", e => { const b = e.target.closest("[data-only]"); if (b) viewerAct("only", +b.dataset.only); });
+$("#stage").addEventListener("click", e => {
+  const b = e.target.closest("[data-only]"); if (b) return viewerAct("only", +b.dataset.only);
+  if (e.target.closest("[data-unpeek]")) { S.vpeek = null; return renderViewer(); }
+  const pk = e.target.closest("[data-peek]");
+  if (pk) {  // click a keeper to compare with it, click it again to close
+    const id = +pk.dataset.peek;
+    S.vpeek = S.vpeek?.id === id ? null : { id, g: S.vcur?.dup_group };
+    return renderViewer();
+  }
+  const f = e.target.closest("[data-focus]"); if (f) focusMember(+f.dataset.focus);
+});
+// select one photo of a duplicate group, from the big photos or the strip below them
+function focusMember(id) {
+  if (S.vcur?.id === id) return;
+  if (S.vfrom === "group") {
+    const i = S.vlist.findIndex(m => m.id === id);
+    if (i >= 0) { S.vidx = i; S.vfocus = null; return renderViewer(); }
+  }
+  S.vfocus = id === S.vlist[S.vidx]?.id ? null : id;
+  renderViewer();
+}
 $("#vClose").onclick = closeViewer;
 $("#vPrev").onclick = () => vStep(-1);
 $("#vNext").onclick = () => vStep(1);
@@ -882,7 +944,8 @@ document.addEventListener("keydown", e => {
   if (!$("#viewer").hidden) {
     const k = e.key.toLowerCase(), it = S.vcur;
     const group = S.vmembers && S.vmembers.length > 1;
-    if (k === "escape") closeViewer();
+    if (k === "escape" && S.vpeek) { S.vpeek = null; renderViewer(); }
+    else if (k === "escape") closeViewer();
     else if (k === "arrowright") vStep(1);
     else if (k === "arrowleft") vStep(-1);
     else if (k === "k") viewerAct("keep");

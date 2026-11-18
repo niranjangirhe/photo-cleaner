@@ -146,4 +146,28 @@ def run():
         g = dup.get(it["id"], (None, None, None))
         rows.append((alias.get(it["id"]), g[0], g[1], g[2], it["id"]))
     db.write_many("UPDATE items SET alias_of=?, dup_group=?, dup_kind=?, dup_best=? WHERE id=?", rows)
-    return {"aliases": len(alias), "groups": sum(len(g) > 1 for g in members.values())}
+    long_aliases = long_videos()
+    return {"aliases": len(alias) + long_aliases, "groups": sum(len(g) > 1 for g in members.values())}
+
+
+def long_videos():
+    """Album copies of a long video. Long videos are never read in full (no sha256), and each album copy
+    has its own Google link, so the same name and size marks one video. Deleting any copy in Google
+    deletes them all, so only one is shown."""
+    vids = db.rows("SELECT id, path, name, folder, bytes, user_decision, gone FROM items WHERE status='skipped'")
+    by = {}
+    for it in vids:
+        by.setdefault((it["name"].lower(), it["bytes"]), []).append(it)
+    rows, moves = [], []
+    for g in by.values():
+        g = sorted(g, key=primary_key)
+        rows.append((None, g[0]["id"]))
+        rows += [(g[0]["id"], it["id"]) for it in g[1:]]
+        # a choice made on a copy before copies were merged moves to the one that is shown
+        chosen = next((it for it in g[1:] if it["user_decision"]), None)
+        if chosen and not g[0]["user_decision"]:
+            moves.append((chosen["user_decision"], chosen["gone"], g[0]["id"]))
+    db.write_many("UPDATE items SET alias_of=? WHERE id=?", rows)
+    db.write_many("UPDATE items SET user_decision=?, gone=? WHERE id=?", moves)
+    db.write("UPDATE items SET user_decision=NULL, gone=0 WHERE status='skipped' AND alias_of IS NOT NULL")
+    return sum(1 for r in rows if r[0] is not None)

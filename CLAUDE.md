@@ -15,7 +15,7 @@ scan -> dupes -> tagger (SigLIP 2, GPU/MPS/CPU) -> faces (SCRFD + ArcFace via on
 - `textrules.py`: plain word lists (important, receipt, receipt_keep, check, throwaway) that `rules.py` applies to the OCR text. Entries starting with "re:" are regular expressions.
 
 - Per-photo background loading goes through `pool.prefetch()`, never `ThreadPoolExecutor.map()` over the whole library: map queues every item at once, and in the faces step that held every decoded preview in memory until the app was killed (29k photos, ~15 GB).
-- Videos of `VIDEO_MAX_S` or longer stay `status='skipped'`: scan only makes a middle-frame thumbnail and preview (`scan.poster()`, with a catch-up pass `scan.posters()` for older scans). No model sees them and `rules` gives them no suggestion; the person decides in the Long videos tab (`VIEWS["long"]`).
+- Videos of `VIDEO_MAX_S` or longer stay `status='skipped'`: scan only makes a middle-frame thumbnail and preview (`scan.poster()`, with a catch-up pass `scan.posters()` for older scans). No model sees them and `rules` gives them no suggestion; the person decides in the Long videos tab (`VIEWS["long"]`). Their album copies have different Google links and no sha256, so `dupes.long_videos()` aliases them by name + size.
 - The photos folder is a setting (`db.input_dir()`), picked in the dashboard. Switching folders clears the old results.
 - `taglist.py`: phrasings are averaged per tag. Types and events use softmax; scenes use softmax against a plain "a photo." background. SigLIP's sigmoid probabilities are tiny for these prompts, so don't threshold on them.
 - Image fingerprints are stored in `items.emb` (float16). `tagger.apply_tags()` re-tags from them without the model if `data/label_cache.npz` matches the current taglist.
