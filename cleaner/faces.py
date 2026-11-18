@@ -1,15 +1,14 @@
 """Step 3: find faces in every photo (SCRFD) and make a fingerprint of each face (ArcFace).
 Both models come from InsightFace's buffalo_l pack and run with onnxruntime on the processor,
 which is fast enough (tens of milliseconds a photo) and needs no CUDA setup."""
-import collections
 import os
-from concurrent.futures import ThreadPoolExecutor
 
 import cv2
 import numpy as np
 import onnxruntime as ort
 
 from . import db
+from .pool import prefetch
 from .config import FACE_DIR, FACE_MIN_PX, FACES, PREVIEWS
 
 # where the eyes, nose and mouth corners sit in a 112x112 ArcFace input
@@ -113,23 +112,6 @@ def crop(img, box, size=160):
     if c <= a or d <= b:
         return None
     return cv2.resize(img[b:d, a:c], (size, size), interpolation=cv2.INTER_AREA)
-
-
-def prefetch(fn, items, ahead=16, threads=4):
-    """Like ThreadPoolExecutor.map, but keeps at most `ahead` results waiting. Plain map() reads every
-    photo up front, so memory grows with the library until the system kills the app."""
-    items = iter(items)
-    ex = ThreadPoolExecutor(threads)
-    try:
-        q = collections.deque(ex.submit(fn, x) for _, x in zip(range(ahead), items))
-        while q:
-            r = q.popleft().result()
-            for x in items:
-                q.append(ex.submit(fn, x))
-                break
-            yield r
-    finally:
-        ex.shutdown(wait=True, cancel_futures=True)
 
 
 def run(stop, progress):

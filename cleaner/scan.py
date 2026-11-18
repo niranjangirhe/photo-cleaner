@@ -11,12 +11,12 @@ import re
 import shutil
 import subprocess
 import time
-from concurrent.futures import ThreadPoolExecutor
 
 import imagehash
 from PIL import Image, ImageFilter, ImageOps, ImageStat
 
 from . import db
+from .pool import prefetch
 from .config import IMG, PREVIEW_SIZE, PREVIEWS, SCAN_THREADS, THUMB_SIZE, THUMBS, VID, VIDEO_MAX_S
 
 try:
@@ -285,17 +285,16 @@ def run(stop, progress):
     done, total = 0, len(todo)
     progress(0, total, f"Scanning {total:,} new files...")
     batch = []
-    with ThreadPoolExecutor(SCAN_THREADS) as ex:
-        for rec in ex.map(work, todo):
-            if rec is None:
-                continue
-            batch.append(rec)
-            done += 1
-            if len(batch) >= 25:
-                for r in batch:
-                    db.write(*update(r))
-                batch = []
-                progress(done, total, f"Scanned {done:,} of {total:,}")
+    for rec in prefetch(work, todo, ahead=SCAN_THREADS * 4, threads=SCAN_THREADS):
+        if rec is None:
+            continue
+        batch.append(rec)
+        done += 1
+        if len(batch) >= 25:
+            for r in batch:
+                db.write(*update(r))
+            batch = []
+            progress(done, total, f"Scanned {done:,} of {total:,}")
     for r in batch:
         db.write(*update(r))
     progress(done, total, f"Scanned {done:,} files")
