@@ -19,7 +19,7 @@ TAGS = "(SELECT group_concat(tag) FROM item_tags WHERE item_id=items.id AND tag 
 # for a spare copy: the photo of its group that is being kept, so both can be shown side by side
 KEEPER = ("(SELECT k.id FROM items k WHERE items.dup_best=0 AND k.dup_group=items.dup_group AND k.dup_best=1 "
           "AND k.alias_of IS NULL LIMIT 1)")
-FIELDS = ("id, name, folder, kind, ext, bytes, w, h, duration, taken, mtime, type, event, face_count, "
+FIELDS = ("id, status, name, folder, kind, ext, bytes, w, h, duration, taken, mtime, type, event, face_count, "
           "decision, bucket, reason, user_decision, gurl, gone, dup_group, dup_kind, dup_best, frames, "
           "origin, favorite, in_storage, g_people, "
           f"{PERSONS} AS persons, {TAGS} AS tags, {KEEPER} AS keeper")
@@ -32,6 +32,8 @@ VIEWS = {
     "deleted": "user_decision='delete' AND gone=1",    # already moved to the trash in Google Photos
     "pending": "alias_of IS NULL AND status != 'skipped' AND decision IS NULL AND user_decision IS NULL",
     "all": "alias_of IS NULL AND status != 'skipped'",
+    # videos too long for the models: no suggestion, you play each one and decide
+    "long": "alias_of IS NULL AND status='skipped' AND user_decision IS NULL",
 }
 SORTS = {"size": "bytes DESC", "date": "COALESCE(taken, mtime) DESC", "oldest": "COALESCE(taken, mtime) ASC",
          "recent": "decided_at DESC NULLS LAST"}
@@ -91,6 +93,9 @@ def status():
         SUM(status='error') AS errors,
         SUM(status='skipped') AS skipped,
         COALESCE(SUM(CASE WHEN status='skipped' THEN bytes END), 0) AS skipped_bytes,
+        SUM(alias_of IS NULL AND status='skipped' AND user_decision IS NULL) AS s_long,
+        COALESCE(SUM(CASE WHEN alias_of IS NULL AND status='skipped' AND user_decision IS NULL THEN bytes END), 0)
+            AS s_long_bytes,
         COALESCE(SUM(CASE WHEN alias_of IS NULL AND status != 'skipped' THEN bytes END), 0) AS bytes,
         SUM(status='scanned' AND alias_of IS NULL AND frames > 0) AS taggable,
         SUM(emb IS NOT NULL) AS tagged,

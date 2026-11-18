@@ -38,6 +38,8 @@ const VIEWS = {
     hint: "Not clear-cut: tickets you may still need, notes, blurry photos with people in them. Your call." },
   groups: { title: "Duplicates", mode: "groups",
     hint: "Each group is the same photo, or shots taken seconds apart. The tool suggests keeping the sharpest; pick a different one with Keep only this one." },
+  long: { title: "Long videos", api: "long", count: "s_long", sort: "size",
+    hint: "Videos too long for the tool to judge, so none of these has a suggestion. Open one to play it, then keep it or approve it for delete. Biggest first: these free the most space." },
   all: { title: "All photos", api: "all", count: "items", sort: "date",
     hint: "Your whole library. Search or filter to find exactly what you want." },
   keep: { title: "Keeping", api: "keep", count: "keep", sort: "date",
@@ -119,7 +121,7 @@ function flagHtml(it) {
   if (s === "approved") return `<span class="flag mine delete">Approved for delete</span>`;
   if (s === "gone") return `<span class="flag mine delete">Deleted in Google</span>`;
   if (s === "kept") return `<span class="flag mine keep">You: keep</span>`;
-  if (s === "pending") return `<span class="flag">Processing</span>`;
+  if (s === "pending") return `<span class="flag">${it.status === "skipped" ? "Your call" : "Processing"}</span>`;
   return `<span class="flag ${s}">${{ keep: "Suggested keep", delete: "Suggested delete", unsure: "Not sure" }[s]}</span>`;
 }
 // does a photo still belong on this page after a change?
@@ -127,10 +129,11 @@ function belongs(view, it) {
   const ud = it.user_decision, d = it.decision;
   return {
     delete: !ud && d === "delete", unsure: !ud && d === "unsure", keep: ud === "keep" || (!ud && d === "keep"),
-    approved: ud === "delete" && !it.gone, deleted: ud === "delete" && !!it.gone, pending: !ud && !d,
+    approved: ud === "delete" && !it.gone, deleted: ud === "delete" && !!it.gone, pending: !ud && !d, long: !ud,
   }[view] ?? true;
 }
 function tagLine(it) {
+  if (it.status === "skipped") return `Long video, ${dur(it.duration)}. Play it and decide`;
   const bits = [];
   if (it.type) bits.push(nm(it.type));
   if (it.event) bits.push(nm(it.event));
@@ -231,11 +234,12 @@ function renderStatus(st) {
     : c.pending || c.scanned < c.files ? (r.phase === "paused" ? "Paused. Press Continue to carry on." : "Press Continue to finish the remaining photos.")
     : "All photos are processed. Review the suggestions.";
   const meta = [];
-  if (r.running && r.total) meta.push(`${num(r.done)} of ${num(r.total)}`);
+  const si = st.steps.findIndex(s => s[0] === r.phase);
+  if (r.running && si >= 0) meta.push(`Step ${si + 1} of ${st.steps.length}: ${st.steps[si][1]}`);
   if (r.running && r.per_min) meta.push(`${num(r.per_min)} per minute`);
   if (r.running && r.eta_s != null) meta.push(`about ${dur(r.eta_s)} left in this step`);
   if (!r.running && c.files) meta.push(`${plural(c.items, "photo or video", "photos and videos")}, ${gb(c.bytes)}`);
-  if (!r.running && c.skipped) meta.push(`${plural(c.skipped, "long video", "long videos")} skipped`);
+  if (!r.running && c.s_long) meta.push(`${plural(c.s_long, "long video", "long videos")} for you to review`);
   $("#runMeta").textContent = meta.join(", ") || st.input;
   $(".run-bar").classList.toggle("busy", r.running && !r.total);
   const pct = r.running && r.total ? r.done / r.total * 100 : c.items ? (c.items - c.pending) / c.items * 100 : 0;
@@ -247,7 +251,7 @@ function renderStatus(st) {
   else if (r.phase === "waiting" || r.phase === "error") b = esc(r.message);
   const banner = $("#banner"); banner.innerHTML = b; banner.hidden = !b;
   const set = (id, n) => { $(id).textContent = n ? num(n) : ""; };
-  set("#nDel", c.s_delete); set("#nUns", c.s_unsure); set("#nGrp", c.groups); set("#nAll", c.items); set("#nKeep", c.keep);
+  set("#nDel", c.s_delete); set("#nUns", c.s_unsure); set("#nGrp", c.groups); set("#nLong", c.s_long); set("#nAll", c.items); set("#nKeep", c.keep);
   set("#nPpl", c.people); set("#nMap", c.located); set("#nAppr", c.approved); set("#nGone", c.gone); set("#nPend", c.pending);
   $("#navPending").hidden = !c.pending;
   $("#freed").innerHTML = c.gone ? `<b>${gb(c.gone_bytes)}</b> deleted in Google so far. Empty the trash there to get the space back.`
@@ -265,8 +269,13 @@ function renderOverview() {
       <div class="hero-actions"><button class="btn primary" data-pick>Choose folder</button><button class="btn" data-run>Start</button></div>
       <p class="muted small" style="margin-top:12px">Now using: ${esc(st.input)}</p>`;
   } else if (!c.s_delete && !c.s_unsure && (r.running || c.pending)) {
-    h = `<h1>Looking through ${plural(c.items || c.files, "photo", "photos")}.</h1>
-      <p>Suggestions appear as each photo is done. You can start reviewing before it finishes.</p>`;
+    const si = st.steps.findIndex(s => s[0] === r.phase);
+    const left = r.eta_s != null ? `, about ${dur(r.eta_s)} left in this step` : "";
+    h = r.running && si >= 0
+      ? `<h1>Step ${si + 1} of ${st.steps.length}: ${esc(st.steps[si][1])}</h1>
+         <p>${r.total ? `${num(r.done)} of ${num(r.total)} done${left}. ` : ""}Suggestions appear as each photo is done. You can start reviewing before it finishes.</p>`
+      : `<h1>Paused.</h1>
+         <p>${num(c.items - c.pending)} of ${plural(c.items, "photo or short video has", "photos and short videos have")} a suggestion so far. Press Continue to carry on.</p>`;
   } else {
     h = `<h1>You could free up ${gb(c.s_delete_bytes)}.</h1>
       <p>${plural(c.s_delete, "photo looks", "photos look")} safe to delete, and ${plural(c.s_unsure, "needs", "need")} a quick look. Nothing is deleted until you approve it and remove it in Google Photos.</p>
@@ -292,6 +301,7 @@ function renderOverview() {
     T("delete", c.s_delete, "To delete", gb(c.s_delete_bytes)),
     T("unsure", c.s_unsure, "Not sure", gb(c.s_unsure_bytes)),
     T("groups", c.groups, "Duplicate groups", ""),
+    T("long", c.s_long, "Long videos to review", gb(c.s_long_bytes)),
     T("people", c.people, "People", `${num(c.with_faces)} photos with faces`),
     T("approved", c.approved, "On the delete list", gb(c.approved_bytes)),
   ].join("");
@@ -350,6 +360,7 @@ function emptyHtml() {
   const msg = {
     delete: ["Nothing left to review here.", running ? "More suggestions appear as photos are processed." : "Check Not sure next, or your delete list."],
     unsure: ["Nothing waiting for you here.", ""],
+    long: ["No long videos left to review.", "The ones you chose are in Keeping and the Delete list."],
     approved: ["Your delete list is empty.", "Approve photos in To delete to add them here."],
     deleted: ["Nothing deleted in Google yet.", "Photos move here once they're deleted in Google Photos."],
   }[v] || [running ? "Nothing here yet." : "Nothing matches.", filtered ? "Try clearing the filters." : ""];
@@ -379,12 +390,12 @@ function rerenderGrid() { if (!$("#grid").hidden && S.items.length) $("#grid").i
 function renderListMeta() {
   const v = VIEWS[S.view];
   const txt = v.mode === "groups" ? plural(S.gtotal, "group", "groups")
-    : `${plural(S.total, "photo", "photos")}, ${gb(S.bytes)}` + (S.bbox ? ", in the area picked on the map" : "");
+    : `${S.view === "long" ? plural(S.total, "video", "videos") : plural(S.total, "photo", "photos")}, ${gb(S.bytes)}` + (S.bbox ? ", in the area picked on the map" : "");
   $("#viewCount").textContent = txt; $("#pageSub").textContent = txt;
   const a = [], n = S.total, scoped = S.bucket || S.q || FILTERS.some(k => S.f[k]) || S.person || S.bbox;
   const shown = scoped ? " shown" : "";
   if (n && ["delete", "unsure"].includes(S.view)) a.push(`<button class="btn keep-outline" data-bulk="keep">Keep all ${num(n)}${shown}</button>`, `<button class="btn danger" data-bulk="delete">Approve all ${num(n)}${shown} for delete</button>`);
-  if (n && ["all", "people", "map", "keep"].includes(S.view) && scoped) a.push(`<button class="btn danger" data-bulk="delete">Approve all ${num(n)} shown for delete</button>`);
+  if (n && ["all", "people", "map", "keep", "long"].includes(S.view) && scoped) a.push(`<button class="btn danger" data-bulk="delete">Approve all ${num(n)} shown for delete</button>`);
   if (S.view === "groups" && S.gtotal) a.push(`<button class="btn danger" data-allgroups>Use every suggestion</button>`);
   if (["approved", "deleted"].includes(S.view)) a.push(`<a class="btn" href="/api/export.csv">Download the list</a>`);
   $("#pageActions").innerHTML = a.join("");
@@ -398,7 +409,7 @@ async function loadView(reset = true) {
     const mode = v.mode === "groups" ? "groups" : v.mode === "people" && !S.person ? "people" : "grid";
     $("#grid").hidden = mode !== "grid"; $("#groups").hidden = mode !== "groups"; $("#people").hidden = mode !== "people";
     $("#toolbar").hidden = mode === "people"; $("#chips").hidden = mode !== "grid";
-    $(".filters").hidden = mode !== "grid"; $(".search").hidden = mode !== "grid";
+    $(".filters").hidden = mode !== "grid"; $(".search").hidden = mode !== "grid" || S.view === "long";  // search reads the tagging model, which skips long videos
     $("#selHint").hidden = mode !== "grid";
     $(".list-meta").hidden = mode === "people";
     $("#mapWrap").hidden = S.view !== "map";

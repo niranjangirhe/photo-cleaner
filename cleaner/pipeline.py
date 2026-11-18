@@ -23,7 +23,7 @@ class Runner:
         self.lock = threading.Lock()
         self.stop = threading.Event()
         self.thread = None
-        self.finished = collections.deque(maxlen=60)
+        self.finished = collections.deque(maxlen=60)  # (time, done) of recent progress, for the speed
         self.recent = collections.deque(maxlen=36)  # ids the current step just finished, for the live feed
         self.state = {"phase": "idle", "done": 0, "total": 0, "message": "Pick your photos folder, then press Start.",
                       "started": None, "phase_started": None, "error": None}
@@ -77,11 +77,13 @@ class Runner:
             fin = list(self.finished)
         s["running"] = self.running()
         s["stopping"] = self.stop.is_set() and s["running"]
-        fin = [t for t in fin if t >= (s.get("phase_started") or 0)]
-        if s["running"] and s["total"] and len(fin) >= 3 and fin[-1] > fin[0]:
-            per_min = (len(fin) - 1) / (fin[-1] - fin[0]) * 60
-            s["per_min"] = round(per_min, 1)
-            s["eta_s"] = int((s["total"] - s["done"]) / per_min * 60) if per_min else None
+        fin = [f for f in fin if f[0] >= (s.get("phase_started") or 0)]
+        # photos per minute from the real counts: steps report every 10-32 photos, not after each one
+        if s["running"] and s["total"] and len(fin) >= 2 and fin[-1][0] - fin[0][0] >= 5:
+            per_min = (fin[-1][1] - fin[0][1]) / (fin[-1][0] - fin[0][0]) * 60
+            if per_min > 0:
+                s["per_min"] = round(per_min, 1)
+                s["eta_s"] = int((s["total"] - s["done"]) / per_min * 60)
         return s
 
     def _set(self, **kw):
@@ -95,8 +97,10 @@ class Runner:
 
     def _progress(self, done, total, msg, ids=None):
         with self.lock:
+            if total != self.state["total"]:  # a new part of the step (e.g. long-video thumbnails)
+                self.finished.clear()
             if done != self.state["done"]:
-                self.finished.append(time.time())
+                self.finished.append((time.time(), done))
             self.state.update(done=done, total=total, message=msg)
             if ids:
                 self.recent.extend(ids)

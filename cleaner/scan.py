@@ -214,6 +214,25 @@ def video(path, iid, info):
     return out
 
 
+def poster(path, iid, info):
+    """A long video: thumbnail and preview from its middle frame, nothing the models would use."""
+    out = video(path, iid, info) if info.get("duration") is not None else dict(info)
+    return {k: v for k, v in out.items() if k in ("w", "h", "duration")}
+
+
+def posters(stop, progress):
+    """Long videos scanned before they got thumbnails."""
+    todo = [r for r in db.rows("SELECT id, path, duration FROM items WHERE status='skipped' AND duration IS NOT NULL "
+                               "AND alias_of IS NULL ORDER BY id")
+            if not os.path.exists(os.path.join(THUMBS, f"{r['id']}.jpg"))]
+    done = 0
+    for _ in prefetch(lambda r: None if stop.is_set() else poster(r["path"], r["id"], {"duration": r["duration"]}),
+                      todo, ahead=SCAN_THREADS * 4, threads=SCAN_THREADS):
+        done += 1
+        if done % 25 == 0 or done == len(todo):
+            progress(done, len(todo), f"Thumbnails for long videos: {done:,} of {len(todo):,}")
+
+
 # ---------- the scan ----------
 
 def discover():
@@ -267,7 +286,8 @@ def run(stop, progress):
             if it["kind"] == "video":
                 info = probe(it["path"])
                 if info["duration"] is None or info["duration"] >= VIDEO_MAX_S:
-                    rec.update(info, status="skipped")  # long videos are left out for now
+                    # long videos aren't judged by the models: just a frame from the middle, for you to decide
+                    rec.update(poster(it["path"], it["id"], info), status="skipped")
                 else:
                     rec["sha256"] = sha256(it["path"])
                     rec.update(video(it["path"], it["id"], info), status="scanned")
@@ -298,3 +318,4 @@ def run(stop, progress):
     for r in batch:
         db.write(*update(r))
     progress(done, total, f"Scanned {done:,} files")
+    posters(stop, progress)
