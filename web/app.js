@@ -194,18 +194,56 @@ $("#themeBtn").onclick = () => { const t = document.documentElement.dataset.them
 
 // ---------- grid preferences: size, whole photo, reasons ----------
 function applyGridPrefs() {
-  const size = +store.get("size", 2), fit = store.get("fit", "0") === "1", cap = store.get("cap", "1") === "1";
-  $("#sizeIn").value = size; $("#fitIn").checked = fit; $("#capIn").checked = cap;
+  const size = +store.get("size", 2), square = store.get("square", "0") === "1", cap = store.get("cap", "1") === "1";
+  $("#sizeIn").value = size; $("#fitIn").checked = square; $("#capIn").checked = cap;
   document.documentElement.style.setProperty("--tile", SIZES[size - 1] + "px");
-  $("#listPage").classList.toggle("fit", fit);
+  $("#listPage").classList.toggle("square", square);
   $("#listPage").classList.toggle("nocap", !cap);
-  S.size = size;
+  S.size = size; S.square = square;
 }
 applyGridPrefs();
-$("#sizeIn").oninput = e => { store.set("size", e.target.value); const was = S.size; applyGridPrefs(); if ((was >= 4) !== (S.size >= 4)) rerenderGrid(); };
-$("#fitIn").onchange = e => { store.set("fit", e.target.checked ? "1" : "0"); applyGridPrefs(); };
+$("#sizeIn").oninput = e => { store.set("size", e.target.value); const was = S.size; applyGridPrefs(); if (S.square && (was >= 4) !== (S.size >= 4)) rerenderGrid(); };
+$("#fitIn").onchange = e => { store.set("square", e.target.checked ? "1" : "0"); applyGridPrefs(); rerenderGrid(); };
 $("#capIn").onchange = e => { store.set("cap", e.target.checked ? "1" : "0"); applyGridPrefs(); };
-const imgSrc = it => S.size >= 4 ? `/preview/${it.id}` : `/thumb/${it.id}`;   // big tiles get the sharper preview
+// Square tiles use the small square thumbnail; the Google-style layout needs the uncropped preview to keep each photo's shape.
+const imgSrc = it => S.square && S.size < 4 ? `/thumb/${it.id}` : `/preview/${it.id}`;
+// width / height of a photo, kept within limits so a panorama or a very tall screenshot can't take over a row
+const clampAr = r => Math.min(2.6, Math.max(0.45, r || 1)).toFixed(3);
+const tileAr = it => clampAr(it.w && it.h ? it.w / it.h : 1);
+// The stored size can ignore phone rotation, so once the preview loads its real shape wins.
+document.addEventListener("load", e => {
+  const img = e.target;
+  if (S.square || img.tagName !== "IMG" || !img.naturalWidth) return;
+  const t = img.closest("#grid .tile");
+  if (t) t.style.setProperty("--ar", clampAr(img.naturalWidth / img.naturalHeight));
+}, true);
+
+// ---------- grid animation when the list changes (photos glide to their new place, new ones grow in) ----------
+const calm = matchMedia("(prefers-reduced-motion: reduce)");
+function gridSnapshot() {
+  const out = new Map();
+  if (calm.matches || $("#grid").hidden) return out;
+  const vh = innerHeight;
+  $$("#grid .tile").forEach(el => { const r = el.getBoundingClientRect(); if (r.bottom > 0 && r.top < vh) out.set(el.dataset.id, r); });
+  return out;
+}
+function gridAnimate(before) {
+  if (calm.matches || $("#grid").hidden) return;
+  const vh = innerHeight; let n = 0;
+  $$("#grid .tile").forEach(el => {
+    const r = el.getBoundingClientRect();
+    if (r.bottom < 0 || r.top > vh) return;
+    const old = before.get(el.dataset.id);
+    if (old && r.width) {
+      const dx = old.left - r.left, dy = old.top - r.top, sx = old.width / r.width, sy = old.height / r.height;
+      el.animate([{ transformOrigin: "0 0", transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})` }, { transformOrigin: "0 0", transform: "none" }],
+        { duration: 420, easing: "cubic-bezier(.2, 0, 0, 1)" });
+    } else {
+      el.animate([{ opacity: 0, transform: "scale(.6)" }, { opacity: 1, transform: "none" }],
+        { duration: 340, delay: Math.min(n++ * 14, 320), easing: "cubic-bezier(.2, 0, 0, 1)", fill: "backwards" });
+    }
+  });
+}
 
 // ---------- status (polled) ----------
 async function pollStatus() {
@@ -215,7 +253,7 @@ async function pollStatus() {
     if (S.view === "overview") renderOverview();
     else maybeRefreshView();
   } catch {
-    $("#runMsg").textContent = "Lost connection to Photo Cleaner. Is it still running?";
+    $("#runMsg").textContent = "Lost connection to Google Photo Cleaner. Is it still running?";
   }
   setTimeout(pollStatus, S.status?.run?.running ? 1500 : 4000);
 }
@@ -376,7 +414,7 @@ function tile(it) {
        <button class="qbtn d${s === "approved" ? " on" : ""}" data-q="delete" title="Approve for delete (D)">Delete</button>`;
   const badges = [it.kind === "video" ? `▶ ${clip(it.duration)}` : "", it.face_count ? `${it.face_count} ${it.face_count > 1 ? "people" : "person"}` : ""].filter(Boolean);
   const keeper = it.keeper && !listView ? `<span class="keeper-thumb" title="The copy suggested to keep. Open this photo to compare them"><img src="/thumb/${it.keeper}" alt=""><span>Kept copy</span></span>` : "";
-  return `<div class="tile ${mine}${sel ? " sel" : ""}${s === "gone" ? " gone" : ""}" data-id="${it.id}" tabindex="0">
+  return `<div class="tile ${mine}${sel ? " sel" : ""}${s === "gone" ? " gone" : ""}" data-id="${it.id}" style="--ar:${tileAr(it)}" tabindex="0">
     <div class="pic"><img src="${imgSrc(it)}" loading="lazy" alt="">
       <span class="tick">${sel ? "✓" : ""}</span>
       <div class="quick">${quick}<button class="qbtn" data-open title="Open (Enter)">Open</button></div>
@@ -425,7 +463,7 @@ async function loadView(reset = true) {
     S.loadedCount = S.status && v.count ? S.status.counts[v.count] : null;
     renderListMeta();
     const html = r.items.map(tile).join("");
-    if (reset) $("#grid").innerHTML = html || emptyHtml();
+    if (reset) { const before = gridSnapshot(); $("#grid").innerHTML = html || emptyHtml(); gridAnimate(before); }
     else $("#grid").insertAdjacentHTML("beforeend", html);
     $("#more").textContent = S.items.length < S.total ? "Loading more…" : "";
     $("#refreshNote").hidden = true;
