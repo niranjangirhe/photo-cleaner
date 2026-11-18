@@ -1,6 +1,7 @@
 """Step 3: find faces in every photo (SCRFD) and make a fingerprint of each face (ArcFace).
 Both models come from InsightFace's buffalo_l pack and run with onnxruntime on the processor,
 which is fast enough (tens of milliseconds a photo) and needs no CUDA setup."""
+import collections
 import os
 from concurrent.futures import ThreadPoolExecutor
 
@@ -114,6 +115,23 @@ def crop(img, box, size=160):
     return cv2.resize(img[b:d, a:c], (size, size), interpolation=cv2.INTER_AREA)
 
 
+def prefetch(fn, items, ahead=16, threads=4):
+    """Like ThreadPoolExecutor.map, but keeps at most `ahead` results waiting. Plain map() reads every
+    photo up front, so memory grows with the library until the system kills the app."""
+    items = iter(items)
+    ex = ThreadPoolExecutor(threads)
+    try:
+        q = collections.deque(ex.submit(fn, x) for _, x in zip(range(ahead), items))
+        while q:
+            r = q.popleft().result()
+            for x in items:
+                q.append(ex.submit(fn, x))
+                break
+            yield r
+    finally:
+        ex.shutdown(wait=True, cancel_futures=True)
+
+
 def run(stop, progress):
     todo = db.rows("SELECT id FROM items WHERE status='scanned' AND alias_of IS NULL AND frames > 0 "
                    "AND faces_done=0 ORDER BY id")
@@ -128,40 +146,39 @@ def run(stop, progress):
         return it, imread(os.path.join(PREVIEWS, f"{it['id']}.jpg"))
 
     done, batch = 0, []
-    with ThreadPoolExecutor(4) as ex:
-        for it, img in ex.map(load, todo):
-            if stop.is_set():
-                return
-            found = []
-            if img is not None:
-                faces = det.detect(img) or det.detect(img, shrink=0.5)
-                good = [f for f in faces if min(f[0][2] - f[0][0], f[0][3] - f[0][1]) >= FACE_MIN_PX and f[1] >= 0.6]
-                vecs = emb.embed(img, [f[2] for f in good]) if good else []
-                gi = 0
-                for box, score, _ in faces:
-                    size = float(min(box[2] - box[0], box[3] - box[1]))
-                    v = None
-                    if size >= FACE_MIN_PX and score >= 0.6:  # big and clear enough to recognise
-                        v = vecs[gi].astype(np.float32).tobytes()
-                        gi += 1
-                    found.append((box, score, size, v, crop(img, box)))
-            count = len(found)
+    for it, img in prefetch(load, todo):
+        if stop.is_set():
+            return
+        found = []
+        if img is not None:
+            faces = det.detect(img) or det.detect(img, shrink=0.5)
+            good = [f for f in faces if min(f[0][2] - f[0][0], f[0][3] - f[0][1]) >= FACE_MIN_PX and f[1] >= 0.6]
+            vecs = emb.embed(img, [f[2] for f in good]) if good else []
+            gi = 0
+            for box, score, _ in faces:
+                size = float(min(box[2] - box[0], box[3] - box[1]))
+                v = None
+                if size >= FACE_MIN_PX and score >= 0.6:  # big and clear enough to recognise
+                    v = vecs[gi].astype(np.float32).tobytes()
+                    gi += 1
+                found.append((box, score, size, v, crop(img, box)))
+        count = len(found)
 
-            def save(c, it=it, found=found, count=count):
-                for box, score, size, v, im in found:
-                    cur = c.execute("INSERT INTO faces(item_id, x1, y1, x2, y2, det, size, emb) "
-                                    "VALUES(?,?,?,?,?,?,?,?)", (it["id"], *map(float, box), score, size, v))
-                    if im is not None:
-                        cv2.imencode(".jpg", im, [cv2.IMWRITE_JPEG_QUALITY, 85])[1].tofile(
-                            os.path.join(FACES, f"{cur.lastrowid}.jpg"))
-                c.execute("UPDATE items SET faces_done=1, face_count=? WHERE id=?", (count, it["id"]))
-                c.execute("DELETE FROM item_tags WHERE item_id=? AND tag='people'", (it["id"],))
-                if count:
-                    c.execute("INSERT INTO item_tags(item_id, tag, score) VALUES(?, 'people', ?)", (it["id"], count))
+        def save(c, it=it, found=found, count=count):
+            for box, score, size, v, im in found:
+                cur = c.execute("INSERT INTO faces(item_id, x1, y1, x2, y2, det, size, emb) "
+                                "VALUES(?,?,?,?,?,?,?,?)", (it["id"], *map(float, box), score, size, v))
+                if im is not None:
+                    cv2.imencode(".jpg", im, [cv2.IMWRITE_JPEG_QUALITY, 85])[1].tofile(
+                        os.path.join(FACES, f"{cur.lastrowid}.jpg"))
+            c.execute("UPDATE items SET faces_done=1, face_count=? WHERE id=?", (count, it["id"]))
+            c.execute("DELETE FROM item_tags WHERE item_id=? AND tag='people'", (it["id"],))
+            if count:
+                c.execute("INSERT INTO item_tags(item_id, tag, score) VALUES(?, 'people', ?)", (it["id"], count))
 
-            db.script(save)
-            done += 1
-            batch.append(it["id"])
-            if done % 10 == 0 or done == total:
-                progress(done, total, f"Checked {done:,} of {total:,} for faces", ids=batch)
-                batch = []
+        db.script(save)
+        done += 1
+        batch.append(it["id"])
+        if done % 10 == 0 or done == total:
+            progress(done, total, f"Checked {done:,} of {total:,} for faces", ids=batch)
+            batch = []
